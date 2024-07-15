@@ -15,19 +15,3 @@ tqdm==4.49
 transformers==4.2.2
 openai==0.26.4
 
-
-# Cython
-# datasets
-# numpy
-# pandas
-# pytorch-lightning
-# pytz
-# scikit-learn
-# scipy
-# spacy
-# scispacy
-# tokenizers
-# torch
-# torchvision
-# tqdmtransformers
-# openai
