@@ -18,6 +18,9 @@ from metrics import SciFactMetrics
 
 import util
 
+import torch
+torch.autograd.set_detect_anomaly(True)
+
 
 def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mask):
     """
@@ -59,7 +62,9 @@ class MultiVerSModel(pl.LightningModule):
         Arguments are set by `add_model_specific_args`.
         """
         super().__init__()
-        self.save_hyperparameters()
+        # self.save_hyperparameters()
+        self.save_hyperparameters(hparams)
+        
 
         # Constants
         self.nei_label = 1  # Int category for NEI label.

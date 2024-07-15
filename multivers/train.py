@@ -13,6 +13,9 @@ import argparse
 import data_train as dm
 from model import MultiVerSModel
 
+import torch
+torch.autograd.set_detect_anomaly(True)
+
 
 def get_timestamp():
     "Store a timestamp for when training started."

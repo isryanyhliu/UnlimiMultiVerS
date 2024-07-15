@@ -1,0 +1,6 @@
+{
+  "abstract_label_only_f1": 0.7758913412563666,
+  "abstract_rationalized_f1": 0.7419354838709679,
+  "sentence_selection_f1": 0.7821176470588236,
+  "sentence_label_f1": 0.6927058823529412
+}

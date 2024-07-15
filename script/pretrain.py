@@ -9,6 +9,8 @@ see for instance https://lightning.ai/forums/t/gradient-checkpointing-ddp-nan/39
 import argparse
 import subprocess
 
+import torch
+torch.autograd.set_detect_anomaly(True)
 
 def get_args():
     help_gpus = """GPU's used for training.
