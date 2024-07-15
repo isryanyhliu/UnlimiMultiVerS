@@ -14,13 +14,15 @@ We provide data, model checkpoints, training and inference code for models train
 
 ## Outline
 
-- [Setup](#setup)
-- [Running inference](#running-inference)
-- [Model checkpoints](#model-checkpoints)
-- [Evaluating predictions](#evaluating-predictions)
-- [Making predictions for new datasets](#making-predictions-for-new-datasets)
-- [Model training](#model-training)
-- [GPT-3 baseline](#gpt-3-baseline)
+- [The MultiVerS model](#the-multivers-model)
+  - [Outline](#outline)
+  - [Setup](#setup)
+  - [Running inference](#running-inference)
+  - [Model checkpoints](#model-checkpoints)
+  - [Evaluating predictions](#evaluating-predictions)
+  - [Making predictions for new datasets](#making-predictions-for-new-datasets)
+  - [Model training](#model-training)
+  - [GPT-3 baseline](#gpt-3-baseline)
 
 ## Setup
 
