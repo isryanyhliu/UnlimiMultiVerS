@@ -1,7 +1,7 @@
 {
   "abstract_label_only_precision": 0.6059113300492611,
   "abstract_label_only_recall": 0.20534223706176963,
-  "abstract_label_only_f1": 0.30673316708229426, 
+  "abstract_label_only_f1": 0.30673316708229426,
   "abstract_rationalized_precision": 0.06403940886699508,
   "abstract_rationalized_recall": 0.021702838063439065,
   "abstract_rationalized_f1": 0.032418952618453865,
