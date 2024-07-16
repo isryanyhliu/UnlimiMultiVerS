@@ -32,10 +32,21 @@ class NPEncoder(json.JSONEncoder):
         return super(NPEncoder, self).default(obj)
 
 
+# def write_jsonl(data, fname):
+#     with open(fname, "w") as f:
+#         for line in data:
+#             print(json.dumps(line, cls=NPEncoder), file=f)
+
 def write_jsonl(data, fname):
+    if data is None:
+        raise ValueError("Data is None. Cannot write to JSONL file.")
+    
     with open(fname, "w") as f:
         for line in data:
-            print(json.dumps(line, cls=NPEncoder), file=f)
+            try:
+                print(json.dumps(line, cls=NPEncoder), file=f)
+            except TypeError as e:
+                print(f"Error converting line to JSON: {line}\nError: {e}")
 
 
 def get_longformer_science_checkpoint():
