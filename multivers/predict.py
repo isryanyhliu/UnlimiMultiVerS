@@ -114,7 +114,7 @@
 
 
 
-### 修改过 第一版, 用于predict healthver
+### 修改过 第一版, 用于predict finetuning 之后的 healthver
 
 
 # from tqdm import tqdm
