@@ -267,15 +267,25 @@ class Collator:
         return torch.tensor(res)
 
 
+import time
+
 def get_dataloader(predict_args):
     "Main entry point to get the data loader. This can only be used at test time."
     reader = MultiVerSReader(predict_args)
     tokenizer = get_tokenizer()
     ds = reader.get_data(tokenizer)
     collator = Collator(tokenizer)
-    return DataLoader(ds,
-                      num_workers=predict_args.num_workers,
-                      batch_size=predict_args.batch_size,
-                      collate_fn=collator,
-                      shuffle=False,
-                      pin_memory=True)
+    
+    start_time = time.time()
+    dataloader = DataLoader(ds,
+                            num_workers=predict_args.num_workers,
+                            batch_size=predict_args.batch_size,
+                            collate_fn=collator,
+                            shuffle=False,
+                            pin_memory=True)
+    print(f"DataLoader initialized in {time.time() - start_time:.2f} seconds")
+    return dataloader
+
+
+
+

@@ -160,13 +160,16 @@ class RandomTrainingUnlimiformer(Unlimiformer[ModelType]):
         self.model.base_model.decoder.gradient_checkpointing = False
         self.long_inputs_encoded, self.long_inputs_mask = self.chunked_encode_input(input_ids=input_ids, attention_mask=attention_mask)
 
-        #  TODO: should the inputs be sampled or the truncated beginning?
-        # if self.random_knn_initial_inputs:
-        #     encoded_inputs, encoded_inputs_mask = self.sample_long_input(self.long_inputs_encoded, self.long_inputs_mask)
-        # else:
-        encoded_inputs = self.long_inputs_encoded[:, :self.actual_model_window_size]
-        encoded_inputs_mask = self.long_inputs_mask[:, :self.actual_model_window_size]
-        return self.original_forward_func(encoder_outputs=(encoded_inputs, ), labels=labels, attention_mask=encoded_inputs_mask, **kwargs)
+        # 检查张量设备
+        print(f'input_ids device: {input_ids.device}')
+        print(f'long_inputs_encoded device: {self.long_inputs_encoded.device}')
+        print(f'long_inputs_mask device: {self.long_inputs_mask.device}')
+
+        encoded_inputs = self.long_inputs_encoded[:, :self.actual_model_window_size].to(self.device)
+        encoded_inputs_mask = self.long_inputs_mask[:, :self.actual_model_window_size].to(self.device)
+
+        return self.original_forward_func(encoder_outputs=(encoded_inputs,), labels=labels, attention_mask=encoded_inputs_mask, **kwargs)
+
 
     def sample_long_input(self, long_inputs_encoded, long_inputs_mask, random_indices=None):
         if long_inputs_mask.shape[-1] < self.actual_model_window_size:

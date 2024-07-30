@@ -254,8 +254,9 @@
 
 ### 修改过 第二版, 用于predict longformer_large_science
 ### 解决  hparams.label_weight 问题
-### AttributeError: 'Namespace' object has no attribute 'label_weight'
 ### OK: fever, feversci, longformer -> healthver, covidfact
+
+### AttributeError: 'Namespace' object has no attribute 'label_weight'
 
 
 import argparse
@@ -397,3 +398,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+### 第三版, 升级了transformer之后报错 (unlimiformer 需要升级版本)
+### KeyError: 'embeddings.position_ids'

@@ -1,25 +1,24 @@
-# multivers/unlimiformer_config.py
+from typing import Any
 
-from dataclasses import dataclass, field
-from typing import Optional, List
-
-@dataclass
 class UnlimiformerArguments:
-    test_unlimiformer: Optional[bool] = field(default=True, metadata={"help": "whether to use KNN."})
-    unlimiformer_verbose: Optional[bool] = field(default=False, metadata={"help": "whether to print KNN intermediate predictions (mostly for debugging)."})
-    layer_begin: Optional[int] = field(default=0, metadata={"help": "The layer to begin applying KNN to. KNN will be applied to layers[knn_layer_begin:layer_end]. By default, it will be applied to all layers: [0:None]]"})
-    layer_end: Optional[int] = field(default=None, metadata={"help": "The layer to end applying KNN to. KNN will be applied to layers[knn_layer_begin:layer_end]. By default, it will be applied to all layers: [0:None]]"})
-    unlimiformer_chunk_overlap: Optional[float] = field(default=0.5, metadata={"help": "The fraction of overlap between input chunks"})
-    unlimiformer_chunk_size: Optional[int] = field(default=None, metadata={"help": "The size of each input chunk"})
-    unlimiformer_head_num: Optional[int] = field(default=None, metadata={"help": "The head to apply KNN to (if None, apply to all heads)"})
-    unlimiformer_exclude: Optional[bool] = field(default=False, metadata={"help": "If True, prioritize the inputs that are **not** in the standard attention window."})
-    random_unlimiformer_training: Optional[bool] = field(default=False)
-    unlimiformer_training: Optional[bool] = field(default=False)
-    use_datastore: Optional[bool] = field(default=False)
-    flat_index: Optional[bool] = field(default=False)
-    test_datastore: Optional[bool] = field(default=False)
-    reconstruct_embeddings: Optional[bool] = field(default=False)
-    gpu_datastore: Optional[bool] = field(default=True)
-    gpu_index: Optional[bool] = field(default=True)
-    index_devices: Optional[List[int]] = field(default_factory=lambda: [0])
-    datastore_device: Optional[int] = field(default=0)
+    def __init__(self):
+        self.unlimiformer_layer_begin = -1
+        self.unlimiformer_layer_end = None
+        self.unlimiformer_head_num = None
+        self.unlimiformer_exclude_attention = False
+        self.unlimiformer_max_len = None
+        self.unlimiformer_chunk_overlap = 0.0
+        self.unlimiformer_verbose = False
+        self.tokenizer = None
+
+    @staticmethod
+    def add_arguments_to_parser(parser):
+        parser.add_argument("--unlimiformer_layer_begin", type=int, default=-1, help="Layer to begin applying Unlimiformer.")
+        parser.add_argument("--unlimiformer_layer_end", type=int, default=None, help="Layer to end applying Unlimiformer.")
+        parser.add_argument("--unlimiformer_head_num", type=int, default=None, help="Specific head number for Unlimiformer.")
+        parser.add_argument("--unlimiformer_exclude_attention", action="store_true", help="Exclude attention.")
+        parser.add_argument("--unlimiformer_max_len", type=int, default=None, help="Max length for Unlimiformer.")
+        parser.add_argument("--unlimiformer_chunk_overlap", type=float, default=0.0, help="Chunk overlap for Unlimiformer.")
+        parser.add_argument("--unlimiformer_verbose", action="store_true", help="Verbose output for Unlimiformer.")
+        parser.add_argument("--tokenizer", type=str, default=None, help="Tokenizer for Unlimiformer.")
+        return parser

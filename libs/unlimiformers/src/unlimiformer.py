@@ -60,7 +60,9 @@ class Unlimiformer(Generic[ModelType]):
         self.datastore_device = torch.device(f'cuda:{datastore_device}' if torch.cuda.is_available() and gpu_datastore else 'cpu')
         self.test_datastore = test_datastore # flag for debugging
 
+        # self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = model.to(self.device)  # 确保模型被迁移到GPU
         self.activation_capturer = None
         self.is_encoder_decoder = model.config.is_encoder_decoder
         self.hook_handles = []
@@ -75,6 +77,24 @@ class Unlimiformer(Generic[ModelType]):
         self.input_ids_size = 0  # must be initialized here to run forward() without generate
 
         self.break_into(model)
+
+    ### unlimimultivers
+    @classmethod
+    def convert_model(cls, model, *args, **kwargs):
+        type_to_class = {
+            BartModel: UnlimiformerBART,
+            BartForConditionalGeneration: UnlimiformerBART,
+            T5Model: UnlimiformerT5,
+            T5ForConditionalGeneration: UnlimiformerT5,
+            LEDModel: UnlimiformerLED,
+            LEDForConditionalGeneration: UnlimiformerLED,
+            LlamaModel: UnlimiformerLLaMa,
+            LlamaForCausalLM: UnlimiformerLLaMa,
+            LongformerModel: UnlimiformerLongformer  # Add Longformer here
+        }
+        if type(model) not in type_to_class:
+            raise ValueError(f"Unsupported model type: {type(model)}")
+        return type_to_class[type(model)](model, *args, **kwargs)
 
     def break_into(self, model):
         self.actual_model_window_size = self.window_size()
@@ -351,7 +371,8 @@ class Unlimiformer(Generic[ModelType]):
                     for i in range(self.model.config.num_hidden_layers)[self.layer_begin:self.layer_end]]
                 self.hidden_states = [[] for _ in range(self.model.config.num_hidden_layers)[self.layer_begin:self.layer_end]]
             torch.cuda.empty_cache()
-        self.prompt_input_ids = input_ids
+        # self.prompt_input_ids = input_ids
+        self.prompt_input_ids = input_ids.to(self.device)
         self.input_ids_size = input_ids.shape[-1]
         self.prompt_keys, self.prompt_values = None, None
         self.prev_tokens = [None for _ in range(len(self.original_decoder_layer_cross_attn_forward_funcs))]
@@ -534,25 +555,22 @@ class Unlimiformer(Generic[ModelType]):
         self.set_gradient_checkpointing(False)
         if not self.is_input_encoding_pass:
             if self.model.training:
-                # self.reset_memory(input_ids, attention_mask)
                 self.long_inputs_encoded, self.long_inputs_mask = self.chunked_encode_input(input_ids=input_ids, attention_mask=attention_mask)
-                input_ids = input_ids[:, :self.actual_model_window_size]
-                attention_mask = attention_mask[:, :self.actual_model_window_size] if attention_mask is not None else None
-                # input_ids = input_ids[:, :self.model_encoder_max_len]
-                # labels = labels[:, :self.model_encoder_max_len] if labels is not None else None
+                input_ids = input_ids[:, :self.actual_model_window_size].to(self.device)
+                attention_mask = attention_mask[:, :self.actual_model_window_size].to(self.device) if attention_mask is not None else None
             else:
                 if kwargs.get('past_key_values') is None:
                     self.is_first_test_decoding_step = True
 
                 if input_ids is not None:
-                    # self.input_ids_size += input_ids.shape[-1]
                     self.input_ids_size += 1
                 if kwargs.get('decoder_input_ids') is not None:
-                    self.generated_input_ids = torch.cat([self.generated_input_ids, kwargs['decoder_input_ids']], axis=-1)
-            
+                    self.generated_input_ids = torch.cat([self.generated_input_ids, kwargs['decoder_input_ids'].to(self.device)], axis=-1)
+
         result = self.original_forward_func(input_ids=input_ids, labels=labels, attention_mask=attention_mask, **kwargs)
         self.is_first_test_decoding_step = False
         return result
+
 
     def create_cross_attn_pre_forward_hook(self, original_cross_attn_forward_func, cur_layer_num):
         def attention_pre_forward_hook(hidden_states, attention_mask=None, *args, **kwargs):
@@ -792,29 +810,8 @@ class Unlimiformer(Generic[ModelType]):
             self.heatmap = self.heatmap[beam_idx]
         return self.original_reorder_cache_func(past, beam_idx)
     
-    @classmethod
-    def convert_model(cls, model, *args, **kwargs):
-        # if type(model.config) in MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING:
-        # elif type(model.config) in MODEL_WITH_LM_HEAD_MAPPING:
-        # else:
-        #     raise ValueError(f'Unsupported model type: {type(model.config)}')
-        # if model.config.is_encoder_decoder:
-        #     model_clone = AutoModelForSeq2SeqLM.from_config(model.config)
-        # else:
-        #     model_clone = AutoModelForCausalLM.from_config(model.config)
-        # model_clone.load_state_dict(model.state_dict()).to(args.device)
-        type_to_class = {
-            BartModel: UnlimiformerBART,
-            BartForConditionalGeneration: UnlimiformerBART,
-            T5Model: UnlimiformerT5,
-            T5ForConditionalGeneration: UnlimiformerT5,
-            LEDModel: UnlimiformerLED,
-            LEDForConditionalGeneration: UnlimiformerLED,
-            LlamaModel: UnlimiformerLLaMa,
-            LlamaForCausalLM: UnlimiformerLLaMa,
-        }
-        type_to_class[type(model)](model, *args, **kwargs)
-        return model
+
+
         
 
     def plot_heatmap(self, data, xticklabels='auto', yticklabels='auto'):
@@ -1152,3 +1149,124 @@ class ActivationCapturer(nn.Module):
         else:
             self.captured = self.unwrap_tuple(layer_output)
     
+
+
+
+
+# UnlimifoerLongformer
+
+from transformers import LongformerModel, LongformerForMaskedLM
+
+class UnlimiformerLongformer(Unlimiformer[LongformerModel]):
+    def __init__(self, model: LongformerModel, *args, **kwargs):
+        super().__init__(model, *args, **kwargs)
+        self.model = model
+        self.config = model.config
+
+    def forward(self, input_ids=None, attention_mask=None, **kwargs):
+        device = next(self.model.parameters()).device
+        if input_ids is not None:
+            input_ids = input_ids.to(device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
+        for key, value in kwargs.items():
+            if isinstance(value, torch.Tensor):
+                kwargs[key] = value.to(device)
+        return self.model(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
+
+
+    def create_key_value(self, encoder_hidden_states, decoder_layer):
+        # (batch, time, hidden_dim)
+        attention = decoder_layer.self_attn
+        # key, value: (batch, heads, time, attn_dim)
+        key = attention.k_proj(encoder_hidden_states)
+        key = key.view(key.shape[0], -1, attention.num_heads, attention.head_dim).transpose(1, 2).contiguous()
+        value = attention.v_proj(encoder_hidden_states)
+        value = value.view(value.shape[0], -1, attention.num_heads, attention.head_dim).transpose(1, 2).contiguous()
+        # key, value: (batch, heads, time, attn_dim)
+        return key, value 
+
+    def process_key_value(self, capturers):
+        key_capturer, value_capturer = capturers
+        key, value = key_capturer.captured, value_capturer.captured
+        attention = self.model.encoder.layer[-1].attention.self
+
+        # query, key, value: (batch, heads, time, attn_dim)
+        key = key.view(key.shape[0], -1, attention.num_heads, attention.head_dim).transpose(1, 2).contiguous()
+        value = value.view(value.shape[0], -1, attention.num_heads, attention.head_dim).transpose(1, 2).contiguous()
+        
+        return key, value
+
+    def process_query(self, output):
+        attention = self.model.encoder.layer[-1].attention.self
+        query = output.view(output.shape[0], output.shape[1], attention.num_heads, attention.head_dim).contiguous()
+        return query
+
+    def get_kv_projections(self, layer_begin, layer_end):
+        return [
+            [layer.attention.self.k_proj, layer.attention.self.v_proj]
+            for layer in self.model.encoder.layer[layer_begin:layer_end]
+        ]
+
+    def activation_to_capture(self, layer_begin, layer_end):
+        if self.use_datastore:
+            return [self.model.encoder.layer[-1]]
+        else:
+            return self.get_kv_projections(layer_begin, layer_end)
+
+    def attention_op_to_run(self, layer_begin, layer_end):
+        return [
+            layer.attention.self.q_proj
+            for layer in self.model.encoder.layer[layer_begin:layer_end]
+        ]
+
+    def attention_layer_to_run(self, layer_begin, layer_end):
+        return self.model.encoder.layer[layer_begin:layer_end]
+
+    def self_attention(self, decoder_layer):
+        return decoder_layer.attention.self
+
+    def cross_attention(self, decoder_layer):
+        return decoder_layer.attention.self
+
+    def window_size(self):
+        return self.model.config.max_position_embeddings
+
+    def create_decoder_layer_args(self, hidden_states, attention_mask, encoder_hidden_states,
+                encoder_attention_mask, layer_head_mask, cross_attn_layer_head_mask,
+                past_key_value, output_attentions, position_bias,
+                encoder_decoder_position_bias, use_cache, key, value):
+        args = {'hidden_states': hidden_states, 
+                'attention_mask': attention_mask, 
+                'encoder_hidden_states': encoder_hidden_states, 
+                'encoder_attention_mask': encoder_attention_mask, 
+                'layer_head_mask': layer_head_mask, 
+                'cross_attn_layer_head_mask': cross_attn_layer_head_mask, 
+                'past_key_value': (None, None, key, value), 
+                'output_attentions': output_attentions, 
+                'use_cache': use_cache,}
+        if key is None and value is None:
+            args['past_key_value'] = None
+        return args
+
+@classmethod
+def convert_model(cls, model, *args, **kwargs):
+    type_to_class = {
+        BartModel: UnlimiformerBART,
+        BartForConditionalGeneration: UnlimiformerBART,
+        T5Model: UnlimiformerT5,
+        T5ForConditionalGeneration: UnlimiformerT5,
+        LEDModel: UnlimiformerLED,
+        LEDForConditionalGeneration: UnlimiformerLED,
+        LlamaModel: UnlimiformerLLaMa,
+        LlamaForCausalLM: UnlimiformerLLaMa,
+        LongformerModel: UnlimiformerLongformer,  # 添加对 LongformerModel 的支持
+    }
+    if type(model) not in type_to_class:
+        raise ValueError(f"Unsupported model type: {type(model)}")
+    type_to_class[type(model)](model, *args, **kwargs)
+    return model
