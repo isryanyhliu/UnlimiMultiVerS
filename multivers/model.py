@@ -240,17 +240,17 @@ class MultiVerSModel(pl.LightningModule):
         predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64) # 通过rationale_threshold将rationale_probs映射到{0,1}之间
 
 
-        data = {
-            "------ Claim 表示 池化 -----"
-            "pooled_output": pooled_output.shape,
-            "----- Sentence 表示 -----"
-            "last_hidden_state": encoded.last_hidden_state.shape,
-            "----- 联合 Rationale 表示 -----"
-            "rationale_input": rationale_input.shape,
-        }
+        # data = {
+        #     "------ Claim 表示 池化 -----"
+        #     "pooled_output": pooled_output.shape,
+        #     "----- Sentence 表示 -----"
+        #     "last_hidden_state": encoded.last_hidden_state.shape,
+        #     "----- 联合 Rationale 表示 -----"
+        #     "rationale_input": rationale_input.shape,
+        # }
 
-        with open("temp.json", "w") as f:
-            json.dump(data, f, indent=4)
+        # with open("temp.json", "w") as f:
+        #     json.dump(data, f, indent=4)
 
 
         return {"label_logits": label_logits,

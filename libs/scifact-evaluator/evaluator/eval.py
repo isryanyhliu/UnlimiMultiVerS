@@ -227,7 +227,7 @@ def get_args():
     parser.add_argument("--metrics_output_file",
                         type=str,
                         help="Location of output metrics file",
-                        default="out_metrics/metrics_new.json")
+                        default="out/metrics_new.json")
     parser.add_argument("--verbose", action="store_true",
                         help="If given, store all metrics; not just F1.")
     return parser.parse_args()
