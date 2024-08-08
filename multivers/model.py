@@ -190,6 +190,63 @@ class MultiVerSModel(pl.LightningModule):
 
 
 
+        return encoder
+
+    def forward(self, tokenized, abstract_sent_idx):
+        """
+        Run the forward pass. Encode the inputs and return softmax values for
+        the labels and the rationale sentences.
+
+        The `abstract_sent_idx` gives the indices of the `</s>` tokens being
+        used to represent each sentence in the abstract.
+        """
+        # Encode.
+        encoded = self.encoder(**tokenized)
+
+        # Make label predictions.
+        pooled_output = self.dropout(encoded.pooler_output)
+        # [n_documents x n_labels]
+        label_logits = self.label_classifier(pooled_output)
+
+
+        # Predict labels.
+        # [n_documents]
+
+        label_probs = F.softmax(label_logits, dim=1).detach()
+        if self.label_threshold is None:
+            # If not doing a label threshold, just take the largest.
+            predicted_labels = label_logits.argmax(dim=1)
+        else:
+            # If we're using a threshold, set the score for the null label to
+            # the threshold and take the largest.
+            label_probs_truncated = label_probs.clone()
+            label_probs_truncated[:, self.nei_label] = self.label_threshold
+            predicted_labels = label_probs_truncated.argmax(dim=1)
+
+        # Make rationale predictions
+        # Need to invoke `continguous` or `batched_index_select` can fail.
+        hidden_states = self.dropout(encoded.last_hidden_state).contiguous()
+        sentence_states = batched_index_select(hidden_states, abstract_sent_idx)
+
+        # Concatenate the CLS token with the sentence states.
+        pooled_rep = pooled_output.unsqueeze(1).expand_as(sentence_states)
+        # [n_documents x max_n_sentences x (2 * encoder_hidden_dim)]
+        rationale_input = torch.cat([pooled_rep, sentence_states], dim=2)
+        # Squeeze out dim 2 (the encoder dim).
+        # [n_documents x max_n_sentences]
+        rationale_logits = self.rationale_classifier(rationale_input).squeeze(2)
+
+        # Predict rationales.
+        # [n_documents x max_n_sentences]
+        rationale_probs = torch.sigmoid(rationale_logits).detach()
+        predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64)
+
+        return {"label_logits": label_logits,
+                "rationale_logits": rationale_logits,
+                "label_probs": label_probs,
+                "rationale_probs": rationale_probs,
+                "predicted_labels": predicted_labels,
+                "predicted_rationales": predicted_rationales}
 
     def training_step(self, batch, batch_idx):
         batch = move_to_device(batch, self.device)
