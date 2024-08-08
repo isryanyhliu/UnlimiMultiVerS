@@ -13,7 +13,7 @@ import util
 
 def get_tokenizer():
     "Need to add a few special tokens to the default longformer checkpoint."
-    tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-large-4096")
+    tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-large-4096", clean_up_tokenization_spaces=False)
     ADDITIONAL_TOKENS = {
         "section_start": "<|sec|>",
         "section_end": "</|sec|>",

@@ -27,11 +27,11 @@ def get_tokenizer(hparams):
     "If using Arman's scilongformer checkpoint, need to add some tokens."
     # If we're not using the science model, just make the normal tokenizer.
     if hparams.encoder_name != "longformer-large-science":
-        tokenizer = AutoTokenizer.from_pretrained(hparams.encoder_name)
+        tokenizer = AutoTokenizer.from_pretrained(hparams.encoder_name, clean_up_tokenization_spaces=False)
         return tokenizer
 
     # Otherwise, add some extra tokens.
-    tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-large-4096")
+    tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-large-4096", clean_up_tokenization_spaces=False)
     ADDITIONAL_TOKENS = {
         "section_start": "<|sec|>",
         "section_end": "</|sec|>",

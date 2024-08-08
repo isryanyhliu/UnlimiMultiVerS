@@ -143,6 +143,65 @@ class MultiVerSModel(pl.LightningModule):
 
         return parser
 
+    # @staticmethod
+    # def _get_encoder(hparams):
+    #     "Start from the Longformer science checkpoint."
+    #     starting_encoder_name = "allenai/longformer-large-4096"
+    #     encoder = LongformerModel.from_pretrained(
+    #         starting_encoder_name,
+    #         gradient_checkpointing=hparams.gradient_checkpointing)
+
+    #     orig_state_dict = encoder.state_dict()
+    #     checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
+
+    #     # New checkpoint
+    #     new_state_dict = {}
+    #     # Add items from loaded checkpoint.
+    #     for k, v in checkpoint_prefixed.items():
+    #         # Don't need the language model head.
+    #         if "lm_head." in k:
+    #             continue
+    #         # Get rid of the first 8 characters, which say `roberta.`.
+    #         new_key = k[8:]
+    #         new_state_dict[new_key] = v
+
+    #     # Add items from Huggingface state_dict. These are never used, but
+    #     # they're needed to make things line up
+    #     ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+    #     for name in ADD_TO_CHECKPOINT:
+    #         new_state_dict[name] = orig_state_dict[name]
+
+    #     # Resize embeddings and load state dict.
+    #     target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
+    #     encoder.resize_token_embeddings(target_embed_size)
+    #     encoder.load_state_dict(new_state_dict)
+
+    #     return encoder
+
+    def clean_checkpoint(checkpoint_path):
+        # Load the checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
+        state_dict = checkpoint['state_dict']
+        
+        # Remove encoder.embeddings.position_ids if it exists
+        if 'encoder.embeddings.position_ids' in state_dict:
+            del state_dict['encoder.embeddings.position_ids']
+        
+        # Create a new checkpoint with cleaned state_dict
+        cleaned_checkpoint = {
+            'state_dict': state_dict,
+            'hyper_parameters': checkpoint.get('hyper_parameters', {}),
+            'epoch': checkpoint.get('epoch', -1),
+            'global_step': checkpoint.get('global_step', -1),
+        }
+
+        # Save the cleaned checkpoint to a temporary file
+        temp_checkpoint_path = "cleaned_checkpoint.ckpt"
+        torch.save(cleaned_checkpoint, temp_checkpoint_path)
+        return temp_checkpoint_path
+
+
+    
     @staticmethod
     def _get_encoder(hparams):
         "Start from the Longformer science checkpoint."
@@ -165,18 +224,24 @@ class MultiVerSModel(pl.LightningModule):
             new_key = k[8:]
             new_state_dict[new_key] = v
 
-        # Add items from Huggingface state_dict. These are never used, but
-        # they're needed to make things line up
-        ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
-        for name in ADD_TO_CHECKPOINT:
-            new_state_dict[name] = orig_state_dict[name]
+        # Remove embeddings.position_ids if it exists in new_state_dict
+        if 'embeddings.position_ids' in new_state_dict:
+            del new_state_dict['embeddings.position_ids']
 
         # Resize embeddings and load state dict.
         target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
         encoder.resize_token_embeddings(target_embed_size)
-        encoder.load_state_dict(new_state_dict)
+        encoder.load_state_dict(new_state_dict, strict=False)
+
+        # Ensure embeddings.position_ids exists if necessary
+        if not hasattr(encoder.embeddings, 'position_ids'):
+            encoder.embeddings.position_ids = torch.arange(target_embed_size).expand((1, -1))
 
         return encoder
+
+
+
+
 
     def forward(self, tokenized, abstract_sent_idx):
         """
