@@ -42,8 +42,14 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--device", default=0, type=int)
     parser.add_argument("--num_workers", default=4, type=int)
-    parser.add_argument("--no_nei", action="store_true", help="If given, never predict NEI.")
-    parser.add_argument("--force_rationale", action="store_true", help="If given, always predict a rationale for non-NEI.")
+    parser.add_argument(
+        "--no_nei", action="store_true", help="If given, never predict NEI."
+    )
+    parser.add_argument(
+        "--force_rationale",
+        action="store_true",
+        help="If given, always predict a rationale for non-NEI.",
+    )
     parser.add_argument("--debug", action="store_true")
 
     # Add Unlimiformer arguments
@@ -152,15 +158,7 @@ def main():
     unlimiformer_args.unlimiformer_max_len = args.unlimiformer_max_len
     unlimiformer_args.unlimiformer_chunk_overlap = args.unlimiformer_chunk_overlap
     unlimiformer_args.unlimiformer_verbose = args.unlimiformer_verbose
-    unlimiformer_args.tokenizer = args.tokenizer
-    unlimiformer_args.random_unlimiformer_training = args.random_unlimiformer_training
-    unlimiformer_args.unlimiformer_training = args.unlimiformer_training
-    unlimiformer_args.use_datastore = args.use_datastore
-    unlimiformer_args.flat_index = args.flat_index
-    unlimiformer_args.test_datastore = args.test_datastore
-    unlimiformer_args.reconstruct_embeddings = args.reconstruct_embeddings
-    unlimiformer_args.gpu_datastore = args.gpu_datastore
-    unlimiformer_args.gpu_index = args.gpu_index
+    unlimiformer_args.tokenizer = args.tokenizer if hasattr(args, 'tokenizer') else None
 
     outname = Path(args.output_file)
     predictions = get_predictions(args, unlimiformer_args)
