@@ -19,6 +19,12 @@ from metrics import SciFactMetrics
 import util
 import json
 import os
+import sys
+
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+from transformers import LongformerModel
+from libs.unlimiformers.src.unlimiformer import Unlimiformer  # 引入 Unlimiformer
 
 
 def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mask):
@@ -140,6 +146,8 @@ class MultiVerSModel(pl.LightningModule):
                             help="Threshold for non-NEI label.")
         parser.add_argument("--rationale_threshold", default=0.5, type=float,
                             help="Threshold for rationale.")
+        # Unlimiformer 参数
+        parser.add_argument("--use_unlimiformer", action="store_true", help="使用 Unlimiformer 作为增强模块")
 
         return parser
 
@@ -204,40 +212,35 @@ class MultiVerSModel(pl.LightningModule):
     
     @staticmethod
     def _get_encoder(hparams):
-        "Start from the Longformer science checkpoint."
-        starting_encoder_name = "allenai/longformer-large-4096"
+        "加载 Longformer 并集成 Unlimiformer"
         encoder = LongformerModel.from_pretrained(
-            starting_encoder_name,
-            gradient_checkpointing=hparams.gradient_checkpointing)
+            "allenai/longformer-base-4096", 
+            gradient_checkpointing=hparams.gradient_checkpointing
+        )
 
-        orig_state_dict = encoder.state_dict()
-        checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
-
-        # New checkpoint
-        new_state_dict = {}
-        # Add items from loaded checkpoint.
-        for k, v in checkpoint_prefixed.items():
-            # Don't need the language model head.
-            if "lm_head." in k:
-                continue
-            # Get rid of the first 8 characters, which say `roberta.`.
-            new_key = k[8:]
-            new_state_dict[new_key] = v
-
-        # Remove embeddings.position_ids if it exists in new_state_dict
-        if 'embeddings.position_ids' in new_state_dict:
-            del new_state_dict['embeddings.position_ids']
-
-        # Resize embeddings and load state dict.
-        target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
-        encoder.resize_token_embeddings(target_embed_size)
-        encoder.load_state_dict(new_state_dict, strict=False)
-
-        # Ensure embeddings.position_ids exists if necessary
-        if not hasattr(encoder.embeddings, 'position_ids'):
-            encoder.embeddings.position_ids = torch.arange(target_embed_size).expand((1, -1))
+        # Integrate Unlimiformer as an enhancement
+        use_unlimiformer = getattr(hparams, 'use_unlimiformer', False)
+        
+        if use_unlimiformer:
+            unlimiformer_args = {
+                'layer_begin': 16,  # 自定义开始层
+                'layer_end': None,  # 到最后一层
+                'unlimiformer_head_num': None,
+                'exclude_attention': False,
+                'chunk_overlap': 0.5,
+                'model_encoder_max_len': None,
+                'verbose': False,
+                'use_datastore': True,
+                'flat_index': False,
+                'test_datastore': False,
+                'reconstruct_embeddings': False,
+                'gpu_datastore': True,
+                'gpu_index': True,
+            }
+            encoder = Unlimiformer.convert_model(encoder, **unlimiformer_args)
 
         return encoder
+
 
 
 

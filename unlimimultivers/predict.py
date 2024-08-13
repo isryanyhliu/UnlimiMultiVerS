@@ -28,13 +28,16 @@ def get_args():
     )
     parser.add_argument("--debug", action="store_true")
 
+    parser.add_argument("--use_unlimiformer", action="store_true", help="使用 Unlimiformer 作为增强模块")
+
     return parser.parse_args()
 
 
 def get_predictions(args):
     # Set up model and data.
     cleaned_checkpoint_path = MultiVerSModel.clean_checkpoint(args.checkpoint_path)
-    model = MultiVerSModel.load_from_checkpoint(checkpoint_path=cleaned_checkpoint_path)
+    model = MultiVerSModel.load_from_checkpoint(checkpoint_path=cleaned_checkpoint_path, strict=False)
+    model.hparams.use_unlimiformer = args.use_unlimiformer  # 根据参数设置是否启用 Unlimiformer
     # 删除临时文件
     os.remove(cleaned_checkpoint_path)
 
