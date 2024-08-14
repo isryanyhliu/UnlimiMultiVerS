@@ -102,7 +102,9 @@ def main():
     if args.starting_checkpoint is not None:
         # Initialize weights from checkpoint and override hyperparams.
         model = MultiVerSModel.load_from_checkpoint(
-            args.starting_checkpoint, hparams=args)
+            args.starting_checkpoint,
+            hparams=args, 
+            strict=False)
     else:
         # Initialize from scratch.
         model = MultiVerSModel(args)
