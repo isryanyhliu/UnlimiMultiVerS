@@ -167,12 +167,15 @@ class MultiVerSModel(pl.LightningModule):
         # they're needed to make things line up
         ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
         for name in ADD_TO_CHECKPOINT:
-            new_state_dict[name] = orig_state_dict[name]
+            if name in orig_state_dict:
+                new_state_dict[name] = orig_state_dict[name]
+            else:
+                print(f"在原始状态字典中找不到键 {name}，跳过。")
 
         # Resize embeddings and load state dict.
         target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
         encoder.resize_token_embeddings(target_embed_size)
-        encoder.load_state_dict(new_state_dict)
+        encoder.load_state_dict(new_state_dict, strict=False)
 
         return encoder
 
