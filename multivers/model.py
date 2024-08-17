@@ -17,8 +17,6 @@ from allennlp_feedforward import FeedForward
 from metrics import SciFactMetrics
 
 import util
-import json
-import os
 
 
 def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mask):
@@ -143,65 +141,6 @@ class MultiVerSModel(pl.LightningModule):
 
         return parser
 
-    # @staticmethod
-    # def _get_encoder(hparams):
-    #     "Start from the Longformer science checkpoint."
-    #     starting_encoder_name = "allenai/longformer-large-4096"
-    #     encoder = LongformerModel.from_pretrained(
-    #         starting_encoder_name,
-    #         gradient_checkpointing=hparams.gradient_checkpointing)
-
-    #     orig_state_dict = encoder.state_dict()
-    #     checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
-
-    #     # New checkpoint
-    #     new_state_dict = {}
-    #     # Add items from loaded checkpoint.
-    #     for k, v in checkpoint_prefixed.items():
-    #         # Don't need the language model head.
-    #         if "lm_head." in k:
-    #             continue
-    #         # Get rid of the first 8 characters, which say `roberta.`.
-    #         new_key = k[8:]
-    #         new_state_dict[new_key] = v
-
-    #     # Add items from Huggingface state_dict. These are never used, but
-    #     # they're needed to make things line up
-    #     ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
-    #     for name in ADD_TO_CHECKPOINT:
-    #         new_state_dict[name] = orig_state_dict[name]
-
-    #     # Resize embeddings and load state dict.
-    #     target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
-    #     encoder.resize_token_embeddings(target_embed_size)
-    #     encoder.load_state_dict(new_state_dict)
-
-    #     return encoder
-
-    def clean_checkpoint(checkpoint_path):
-        # Load the checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
-        state_dict = checkpoint['state_dict']
-        
-        # Remove encoder.embeddings.position_ids if it exists
-        if 'encoder.embeddings.position_ids' in state_dict:
-            del state_dict['encoder.embeddings.position_ids']
-        
-        # Create a new checkpoint with cleaned state_dict
-        cleaned_checkpoint = {
-            'state_dict': state_dict,
-            'hyper_parameters': checkpoint.get('hyper_parameters', {}),
-            'epoch': checkpoint.get('epoch', -1),
-            'global_step': checkpoint.get('global_step', -1),
-        }
-
-        # Save the cleaned checkpoint to a temporary file
-        temp_checkpoint_path = "cleaned_checkpoint.ckpt"
-        torch.save(cleaned_checkpoint, temp_checkpoint_path)
-        return temp_checkpoint_path
-
-
-    
     @staticmethod
     def _get_encoder(hparams):
         "Start from the Longformer science checkpoint."
@@ -224,24 +163,18 @@ class MultiVerSModel(pl.LightningModule):
             new_key = k[8:]
             new_state_dict[new_key] = v
 
-        # Remove embeddings.position_ids if it exists in new_state_dict
-        if 'embeddings.position_ids' in new_state_dict:
-            del new_state_dict['embeddings.position_ids']
+        # Add items from Huggingface state_dict. These are never used, but
+        # they're needed to make things line up
+        ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+        for name in ADD_TO_CHECKPOINT:
+            new_state_dict[name] = orig_state_dict[name]
 
         # Resize embeddings and load state dict.
         target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
         encoder.resize_token_embeddings(target_embed_size)
-        encoder.load_state_dict(new_state_dict, strict=False)
-
-        # Ensure embeddings.position_ids exists if necessary
-        if not hasattr(encoder.embeddings, 'position_ids'):
-            encoder.embeddings.position_ids = torch.arange(target_embed_size).expand((1, -1))
+        encoder.load_state_dict(new_state_dict)
 
         return encoder
-
-
-
-
 
     def forward(self, tokenized, abstract_sent_idx):
         """
@@ -251,21 +184,13 @@ class MultiVerSModel(pl.LightningModule):
         The `abstract_sent_idx` gives the indices of the `</s>` tokens being
         used to represent each sentence in the abstract.
         """
-        # 将claim和sentence一起编码，这样可以利用transformer的全局上下文编码能力，使得claim和sentence的信息在编码过程中相互影响
-        # 包括隐藏状态（last_hidden_state）和池化输出（pooler_output）
         # Encode.
-        encoded = self.encoder(**tokenized) 
+        encoded = self.encoder(**tokenized)
 
-
-        # 池化操作主要代表了整个输入序列的全局特征。虽然它包括了claim和所有句子的全局表示，但在实践中，它往往更能代表claim的全局特征。
         # Make label predictions.
         pooled_output = self.dropout(encoded.pooler_output)
-
-
-        # 通过全连接层将claim的特征表示映射到label空间
         # [n_documents x n_labels]
         label_logits = self.label_classifier(pooled_output)
-
 
         # Predict labels.
         # [n_documents]
@@ -281,42 +206,23 @@ class MultiVerSModel(pl.LightningModule):
             label_probs_truncated[:, self.nei_label] = self.label_threshold
             predicted_labels = label_probs_truncated.argmax(dim=1)
 
-        
-
-        # 隐藏状态, 获取每个句子的表示
         # Make rationale predictions
         # Need to invoke `continguous` or `batched_index_select` can fail.
         hidden_states = self.dropout(encoded.last_hidden_state).contiguous()
-        sentence_states = batched_index_select(hidden_states, abstract_sent_idx) # 使用batched_index_select函数从模型编码后的结果中提取每个句子的细粒度表示。这些表示保留了每个句子的详细信息。
+        sentence_states = batched_index_select(hidden_states, abstract_sent_idx)
 
-
-        # 拼接操作，将claim的全局特征表示与每个句子的表示拼接在一起
         # Concatenate the CLS token with the sentence states.
-        pooled_rep = pooled_output.unsqueeze(1).expand_as(sentence_states) # 将claim的全局特征表示扩展到与每个句子的表示相同的维度
+        pooled_rep = pooled_output.unsqueeze(1).expand_as(sentence_states)
         # [n_documents x max_n_sentences x (2 * encoder_hidden_dim)]
-        rationale_input = torch.cat([pooled_rep, sentence_states], dim=2) # 将claim的全局特征表示与每个句子的表示拼接在一起
+        rationale_input = torch.cat([pooled_rep, sentence_states], dim=2)
         # Squeeze out dim 2 (the encoder dim).
         # [n_documents x max_n_sentences]
-        rationale_logits = self.rationale_classifier(rationale_input).squeeze(2) # 通过全连接层将claim的全局特征表示与每个句子的表示拼接在一起，然后映射到rationale空间
+        rationale_logits = self.rationale_classifier(rationale_input).squeeze(2)
 
         # Predict rationales.
         # [n_documents x max_n_sentences]
-        rationale_probs = torch.sigmoid(rationale_logits).detach() # 通过sigmoid函数将rationale_logits映射到[0,1]之间
-        predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64) # 通过rationale_threshold将rationale_probs映射到{0,1}之间
-
-
-        # data = {
-        #     "------ Claim 表示 池化 -----"
-        #     "pooled_output": pooled_output.shape,
-        #     "----- Sentence 表示 -----"
-        #     "last_hidden_state": encoded.last_hidden_state.shape,
-        #     "----- 联合 Rationale 表示 -----"
-        #     "rationale_input": rationale_input.shape,
-        # }
-
-        # with open("temp.json", "w") as f:
-        #     json.dump(data, f, indent=4)
-
+        rationale_probs = torch.sigmoid(rationale_logits).detach()
+        predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64)
 
         return {"label_logits": label_logits,
                 "rationale_logits": rationale_logits,

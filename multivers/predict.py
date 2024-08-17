@@ -5,8 +5,6 @@ from pathlib import Path
 from model import MultiVerSModel
 from data import get_dataloader
 import util
-import os
-
 
 
 def get_args():
@@ -33,11 +31,7 @@ def get_args():
 
 def get_predictions(args):
     # Set up model and data.
-    cleaned_checkpoint_path = MultiVerSModel.clean_checkpoint(args.checkpoint_path)
-    model = MultiVerSModel.load_from_checkpoint(checkpoint_path=cleaned_checkpoint_path)
-    # 删除临时文件
-    os.remove(cleaned_checkpoint_path)
-
+    model = MultiVerSModel.load_from_checkpoint(checkpoint_path=args.checkpoint_path)
     # If not predicting NEI, set the model label threshold to 0.
     if args.no_nei:
         model.label_threshold = 0.0

@@ -13,7 +13,7 @@ import util
 
 def get_tokenizer():
     "Need to add a few special tokens to the default longformer checkpoint."
-    tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-large-4096", clean_up_tokenization_spaces=False)
+    tokenizer = AutoTokenizer.from_pretrained("allenai/longformer-large-4096")
     ADDITIONAL_TOKENS = {
         "section_start": "<|sec|>",
         "section_end": "</|sec|>",
@@ -267,25 +267,15 @@ class Collator:
         return torch.tensor(res)
 
 
-import time
-
 def get_dataloader(predict_args):
     "Main entry point to get the data loader. This can only be used at test time."
     reader = MultiVerSReader(predict_args)
     tokenizer = get_tokenizer()
     ds = reader.get_data(tokenizer)
     collator = Collator(tokenizer)
-    
-    start_time = time.time()
-    dataloader = DataLoader(ds,
-                            num_workers=predict_args.num_workers,
-                            batch_size=predict_args.batch_size,
-                            collate_fn=collator,
-                            shuffle=False,
-                            pin_memory=True)
-    print(f"DataLoader initialized in {time.time() - start_time:.2f} seconds")
-    return dataloader
-
-
-
-
+    return DataLoader(ds,
+                      num_workers=predict_args.num_workers,
+                      batch_size=predict_args.batch_size,
+                      collate_fn=collator,
+                      shuffle=False,
+                      pin_memory=True)

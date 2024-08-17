@@ -13,9 +13,6 @@ import argparse
 import data_train as dm
 from model import MultiVerSModel
 
-import torch
-torch.autograd.set_detect_anomaly(True)
-
 
 def get_timestamp():
     "Store a timestamp for when training started."
@@ -102,9 +99,7 @@ def main():
     if args.starting_checkpoint is not None:
         # Initialize weights from checkpoint and override hyperparams.
         model = MultiVerSModel.load_from_checkpoint(
-            args.starting_checkpoint,
-            hparams=args, 
-            strict=False)
+            args.starting_checkpoint, hparams=args)
     else:
         # Initialize from scratch.
         model = MultiVerSModel(args)
