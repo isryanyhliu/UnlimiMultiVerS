@@ -16,6 +16,10 @@ from allennlp_nn_util import batched_index_select
 from allennlp_feedforward import FeedForward
 from metrics import SciFactMetrics
 
+from lion_pytorch import Lion  # 假设 Lion 是通过这个方式导入的
+
+# from xformers.ops import MemoryEfficientAttentionFlashAttentionOp  # 使用xformers加速注意力机制
+
 import util
 
 
@@ -147,7 +151,9 @@ class MultiVerSModel(pl.LightningModule):
         starting_encoder_name = "allenai/longformer-large-4096"
         encoder = LongformerModel.from_pretrained(
             starting_encoder_name,
-            gradient_checkpointing=hparams.gradient_checkpointing)
+            gradient_checkpointing=hparams.gradient_checkpointing,
+            # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
+        )            
 
         orig_state_dict = encoder.state_dict()
         checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
@@ -308,7 +314,8 @@ class MultiVerSModel(pl.LightningModule):
     def configure_optimizers(self):
         "Set the same LR for all parameters."
         hparams = self.hparams.hparams
-        optimizer = transformers.AdamW(self.parameters(), lr=self.lr)
+        # optimizer = transformers.AdamW(self.parameters(), lr=self.lr)
+        optimizer = Lion(self.parameters(), lr=self.lr)
 
         # If we're debugging, just use the vanilla optimizer.
         if hparams.fast_dev_run or hparams.debug:
