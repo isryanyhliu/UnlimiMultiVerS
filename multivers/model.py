@@ -23,6 +23,20 @@ from lion_pytorch import Lion  # 假设 Lion 是通过这个方式导入的
 
 import util
 
+import os
+import sys
+# 获取当前文件所在的目录（即 multivers 目录）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 获取项目根目录的路径
+project_root = os.path.dirname(current_dir)
+
+# 将 libs 目录添加到 sys.path
+libs_path = os.path.join(project_root, 'libs')
+sys.path.append(libs_path)
+
+from unlimiformers.src.unlimiformer import Unlimiformer
+
 
 def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mask):
     """
@@ -146,45 +160,81 @@ class MultiVerSModel(pl.LightningModule):
 
         return parser
 
-    @staticmethod
-    def _get_encoder(hparams):
-        "Start from the Longformer science checkpoint."
-        starting_encoder_name = "allenai/longformer-large-4096"
+    # @staticmethod
+    # def _get_encoder(hparams):
+    #     "Start from the Longformer science checkpoint."
+    #     starting_encoder_name = "allenai/longformer-large-4096"
+    #     encoder = LongformerModel.from_pretrained(
+    #         starting_encoder_name,
+    #         gradient_checkpointing=hparams.gradient_checkpointing,
+    #         # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
+    #     )            
+
+    #     orig_state_dict = encoder.state_dict()
+    #     checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
+
+    #     # New checkpoint
+    #     new_state_dict = {}
+    #     # Add items from loaded checkpoint.
+    #     for k, v in checkpoint_prefixed.items():
+    #         # Don't need the language model head.
+    #         if "lm_head." in k:
+    #             continue
+    #         # Get rid of the first 8 characters, which say `roberta.`.
+    #         new_key = k[8:]
+    #         new_state_dict[new_key] = v
+
+    #     # Add items from Huggingface state_dict. These are never used, but
+    #     # they're needed to make things line up
+    #     ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+    #     for name in ADD_TO_CHECKPOINT:
+    #         if name in orig_state_dict:
+    #             new_state_dict[name] = orig_state_dict[name]
+    #         else:
+    #             print(f"在原始状态字典中找不到键 {name}，跳过。")
+
+    #     # Resize embeddings and load state dict.
+    #     target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
+    #     encoder.resize_token_embeddings(target_embed_size)
+    #     encoder.load_state_dict(new_state_dict, strict=False)
+
+    #     return encoder
+
+    def _get_encoder(self, hparams):
+        "Load the existing Longformer-based checkpoint and convert it to Unlimiformer."
+        # 加载原有的 Longformer 模型权重
         encoder = LongformerModel.from_pretrained(
-            starting_encoder_name,
+            "allenai/longformer-large-4096",
             gradient_checkpointing=hparams.gradient_checkpointing,
-            # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
-        )            
+        )
 
-        orig_state_dict = encoder.state_dict()
+        # Load the state dict from the Longformer + healthver fine-tuned checkpoint
         checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
+        encoder.load_state_dict(checkpoint_prefixed, strict=False)
 
-        # New checkpoint
-        new_state_dict = {}
-        # Add items from loaded checkpoint.
-        for k, v in checkpoint_prefixed.items():
-            # Don't need the language model head.
-            if "lm_head." in k:
-                continue
-            # Get rid of the first 8 characters, which say `roberta.`.
-            new_key = k[8:]
-            new_state_dict[new_key] = v
+        # Convert Longformer to Unlimiformer
+        unlimiformer_kwargs = {
+            'layer_begin': 0,
+            'layer_end': None,
+            'unlimiformer_head_num': None, 
+            # 'exclude_attention': hparams.unlimiformer_exclude,
+            # 'chunk_overlap': hparams.unlimiformer_chunk_overlap,
+            # 'model_encoder_max_len': hparams.unlimiformer_chunk_size,
+            # 'verbose': hparams.unlimiformer_verbose,
+            'unlimiformer_training': True,
+            'use_datastore': False, 
+            'flat_index': False,
+            'test_datastore': False, 
+            'reconstruct_embeddings': False, 
+            'gpu_datastore': True,
+            'gpu_index': True,
+        }
 
-        # Add items from Huggingface state_dict. These are never used, but
-        # they're needed to make things line up
-        ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
-        for name in ADD_TO_CHECKPOINT:
-            if name in orig_state_dict:
-                new_state_dict[name] = orig_state_dict[name]
-            else:
-                print(f"在原始状态字典中找不到键 {name}，跳过。")
-
-        # Resize embeddings and load state dict.
-        target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
-        encoder.resize_token_embeddings(target_embed_size)
-        encoder.load_state_dict(new_state_dict, strict=False)
+        # 将 Longformer 转换为 Unlimiformer
+        encoder = Unlimiformer.convert_model(encoder, **unlimiformer_kwargs)
 
         return encoder
+
 
     def forward(self, tokenized, abstract_sent_idx):
         """
