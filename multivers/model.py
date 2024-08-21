@@ -214,14 +214,14 @@ class MultiVerSModel(pl.LightningModule):
 
         # Convert Longformer to Unlimiformer
         unlimiformer_kwargs = {
-            'layer_begin': 0,
+            'layer_begin': 6, 
             'layer_end': None,
-            'unlimiformer_head_num': None, 
-            # 'exclude_attention': hparams.unlimiformer_exclude,
-            # 'chunk_overlap': hparams.unlimiformer_chunk_overlap,
-            # 'model_encoder_max_len': hparams.unlimiformer_chunk_size,
-            # 'verbose': hparams.unlimiformer_verbose,
-            'unlimiformer_training': True,
+            'unlimiformer_head_num': None, # 
+            'exclude_attention': False, # 是否排除注意力层, True保留原来的, False使用unlimiformer的
+            'chunk_overlap': 1024, # 块之间的重叠, 越大越重视连贯性
+            'model_encoder_max_len': 1024, # 每个块的最大长度, 越大越能捕捉上下文
+            'verbose': False, # 是否打印详细信息, 默认为 False
+            'unlimiformer_training': True, # 训练时设置为 True, 推理时设置为 False !!!
             'use_datastore': False, 
             'flat_index': False,
             'test_datastore': False, 
