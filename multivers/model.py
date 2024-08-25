@@ -228,7 +228,7 @@ class MultiVerSModel(pl.LightningModule):
             'gpu_datastore': True,
             'gpu_index': True,
             'unlimiformer_training': True, # 训练时设置为 True, 推理时设置为 False !!!
-            'test_unlimiformer': False, # 训练时设置为 False, 推理时设置为 True !!!
+            # 'test_unlimiformer': False, # 训练时设置为 False, 推理时设置为 True !!!
         }
 
         # 将 Longformer 转换为 Unlimiformer
