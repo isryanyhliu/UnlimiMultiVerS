@@ -214,7 +214,7 @@ class MultiVerSModel(pl.LightningModule):
 
         # Convert Longformer to Unlimiformer
         unlimiformer_kwargs = {
-            'layer_begin': 6, 
+            'layer_begin': 0, 
             'layer_end': None,
             'unlimiformer_head_num': None, # 
             'exclude_attention': False, # 是否排除注意力层, True保留原来的, False使用unlimiformer的
