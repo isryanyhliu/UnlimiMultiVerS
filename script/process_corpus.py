@@ -5,8 +5,11 @@ import json
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 设置相对路径
-input_file = os.path.join(script_dir, '../data_train/target/healthver/corpus.jsonl')
-output_file = os.path.join(script_dir, '../data_train/target/healthver/corpus_new.jsonl')
+# input_file = os.path.join(script_dir, '../data_train/target/healthver/corpus.jsonl')
+# output_file = os.path.join(script_dir, '../data_train/target/healthver/corpus_new.jsonl')
+
+input_file = os.path.join(script_dir, '../data/healthver/corpus.jsonl')
+output_file = os.path.join(script_dir, '../data/healthver/corpus_new.jsonl')
 
 # 打开输入文件和输出文件
 with open(input_file, 'r', encoding='utf-8') as infile, open(output_file, 'w', encoding='utf-8') as outfile:
