@@ -1,13 +1,21 @@
 from argparse import ArgumentParser
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
-from transformers import LongformerModel, AdamW, get_linear_schedule_with_warmup
 import pytorch_lightning as pl
+from pytorch_lightning.utilities.parsing import lightning_getattr
+import math
+import torch
+from torch.utils.checkpoint import checkpoint   # Without this, I get an import error.
+from torch import nn
+from torch.nn import functional as F
+import transformers
+from transformers.optimization import get_linear_schedule_with_warmup
+from pytorch_lightning.core.decorators import auto_move_data
+
+from transformers import LongformerModel
+
 from allennlp_nn_util import batched_index_select
 from allennlp_feedforward import FeedForward
 from metrics import SciFactMetrics
+
 import util
 
 
@@ -40,85 +48,70 @@ def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mas
 
     return final_loss
 
-class LoRALinear(nn.Module):
-    def __init__(self, in_features, out_features, r=4, lora_alpha=32):
-        super(LoRALinear, self).__init__()
-        self.r = r
-        self.lora_alpha = lora_alpha
-        self.weight = nn.Parameter(torch.zeros(out_features, in_features))
-        self.lora_a = nn.Parameter(torch.zeros(r, in_features))
-        self.lora_b = nn.Parameter(torch.zeros(out_features, r))
-        self.scaling = lora_alpha / r
-
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_a)
-        nn.init.zeros_(self.lora_b)
-
-    def forward(self, x):
-        return F.linear(x, self.weight + self.scaling * (self.lora_b @ self.lora_a))
-
 
 class MultiVerSModel(pl.LightningModule):
+    """
+    Multi-task SciFact model that encodes claim / abstract pairs using
+    Longformer and then predicts rationales and labels in a multi-task fashion.
+    """
     def __init__(self, hparams):
+        """
+        Arguments are set by `add_model_specific_args`.
+        """
         super().__init__()
         self.save_hyperparameters()
-        
-        # 如果 train_batch_size 不在 hparams 中，手动添加它
-        if not hasattr(self.hparams, 'train_batch_size'):
-            self.hparams.train_batch_size = 8  # 设置默认值或根据实际情况调整
 
-        if not hasattr(self.hparams, 'accumulate_grad_batches'):
-            self.hparams.accumulate_grad_batches = 1  # 设置默认值或根据实际情况调整
+        # Constants
+        self.nei_label = 1  # Int category for NEI label.
 
-        if not hasattr(self.hparams, 'scheduler_total_epochs'):
-            self.hparams.scheduler_total_epochs = None
-            
-        if not hasattr(self.hparams, 'max_epochs'):
-            self.hparams.max_epochs = 20
-
-        # 如果 hparams 中没有定义 label_threshold，则设置默认值
-        if hasattr(hparams, 'label_threshold'):
+        # Classificaiton thresholds. These were added later, so older configs
+        # won't have them.
+        if hasattr(hparams, "label_threshold"):
             self.label_threshold = hparams.label_threshold
         else:
-            self.label_threshold = 0.5  # 默认值，依据你的需求设置
+            self.label_threshold = None
 
-        # 初始化 rationale_threshold
-        if hasattr(hparams, 'rationale_threshold'):
+        if hasattr(hparams, "rationale_threshold"):
             self.rationale_threshold = hparams.rationale_threshold
         else:
-            self.rationale_threshold = 0.5  # 默认值，依据你的需求设置
+            self.rationale_threshold = 0.5
 
-        # 其他初始化代码...
-        self.num_training_instances = hparams.num_training_instances
-        self.encoder = self._get_encoder()
+        # Paramters
         self.label_weight = hparams.label_weight
         self.rationale_weight = hparams.rationale_weight
         self.frac_warmup = hparams.frac_warmup
-        self.lr = hparams.lr
-        self.dropout = nn.Dropout(self.encoder.config.hidden_dropout_prob)  # 假设你需要使用 encoder 的 dropout 概率
 
+        # Model components.
+        self.encoder_name = hparams.encoder_name
+        self.encoder = self._get_encoder(hparams)
+        self.dropout = nn.Dropout(self.encoder.config.hidden_dropout_prob)
+
+        # Final output layers.
         hidden_size = self.encoder.config.hidden_size
         activations = [nn.GELU(), nn.Identity()]
-        dropouts = [self.encoder.config.hidden_dropout_prob, 0]
-
+        dropouts = [self.dropout.p, 0]
         self.label_classifier = FeedForward(
             input_dim=hidden_size,
             num_layers=2,
             hidden_dims=[hidden_size, hparams.num_labels],
             activations=activations,
-            dropout=dropouts
-        )
+            dropout=dropouts)
         self.rationale_classifier = FeedForward(
             input_dim=2 * hidden_size,
             num_layers=2,
             hidden_dims=[hidden_size, 1],
             activations=activations,
-            dropout=dropouts
-        )
+            dropout=dropouts)
+
+        # Learning rates.
+        self.lr = hparams.lr
 
         # Metrics
         fold_names = ["train", "valid", "test"]
-        metrics = {f"metrics_{name}": SciFactMetrics(compute_on_step=False) for name in fold_names}
+        metrics = {}
+        for name in fold_names:
+            metrics[f"metrics_{name}"] = SciFactMetrics(compute_on_step=False)
+
         self.metrics = nn.ModuleDict(metrics)
 
     @staticmethod
@@ -148,84 +141,127 @@ class MultiVerSModel(pl.LightningModule):
 
         return parser
 
-    def _get_encoder(self):
-        "Load Longformer model and apply LoRA to linear layers."
+    # @staticmethod
+    # def _get_encoder(hparams):
+    #     "Start from the Longformer science checkpoint."
+    #     starting_encoder_name = "allenai/longformer-large-4096"
+    #     encoder = LongformerModel.from_pretrained(
+    #         starting_encoder_name,
+    #         gradient_checkpointing=hparams.gradient_checkpointing)
+
+    #     orig_state_dict = encoder.state_dict()
+    #     checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
+
+    #     # New checkpoint
+    #     new_state_dict = {}
+    #     # Add items from loaded checkpoint.
+    #     for k, v in checkpoint_prefixed.items():
+    #         # Don't need the language model head.
+    #         if "lm_head." in k:
+    #             continue
+    #         # Get rid of the first 8 characters, which say `roberta.`.
+    #         new_key = k[8:]
+    #         new_state_dict[new_key] = v
+
+    #     # Add items from Huggingface state_dict. These are never used, but
+    #     # they're needed to make things line up
+    #     ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+    #     for name in ADD_TO_CHECKPOINT:
+    #         new_state_dict[name] = orig_state_dict[name]
+
+    #     # Resize embeddings and load state dict.
+    #     target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
+    #     encoder.resize_token_embeddings(target_embed_size)
+    #     encoder.load_state_dict(new_state_dict)
+
+    #     return encoder
+    
+
+    @staticmethod
+    def _get_encoder(hparams):
+        "Start from the Longformer science checkpoint."
         starting_encoder_name = "allenai/longformer-large-4096"
-        gradient_checkpointing = getattr(self.hparams, "gradient_checkpointing", False)
         encoder = LongformerModel.from_pretrained(
             starting_encoder_name,
-            gradient_checkpointing=gradient_checkpointing,
-        )
+            gradient_checkpointing=hparams.gradient_checkpointing,
+            # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
+        )            
 
-        # Load the science checkpoint
         orig_state_dict = encoder.state_dict()
         checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
 
         # New checkpoint
         new_state_dict = {}
+        # Add items from loaded checkpoint.
         for k, v in checkpoint_prefixed.items():
+            # Don't need the language model head.
             if "lm_head." in k:
                 continue
+            # Get rid of the first 8 characters, which say `roberta.`.
             new_key = k[8:]
             new_state_dict[new_key] = v
 
-        # Add items from the Huggingface state dict to align with the new checkpoint
+        # Add items from Huggingface state_dict. These are never used, but
+        # they're needed to make things line up
         ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
         for name in ADD_TO_CHECKPOINT:
             if name in orig_state_dict:
                 new_state_dict[name] = orig_state_dict[name]
             else:
-                print(f"Key {name} not found in original state dict, skipping.")
+                print(f"在原始状态字典中找不到键 {name}，跳过。")
 
+        # Resize embeddings and load state dict.
         target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
         encoder.resize_token_embeddings(target_embed_size)
         encoder.load_state_dict(new_state_dict, strict=False)
 
-        # Apply LoRA and freeze original weights
-        def replace_with_lora_and_freeze(module):
-            for name, child in module.named_children():
-                if isinstance(child, nn.Linear):
-                    lora_layer = LoRALinear(child.in_features, child.out_features)
-                    lora_layer.weight.data = child.weight.data.clone()
-                    setattr(module, name, lora_layer)
-                else:
-                    replace_with_lora_and_freeze(child)
-            return module
-
-        encoder = replace_with_lora_and_freeze(encoder)
-
-        # Freeze all parameters except those in LoRA layers
-        for param in encoder.parameters():
-            param.requires_grad = False
-
-        for name, module in encoder.named_modules():
-            if isinstance(module, LoRALinear):
-                for param in module.parameters():
-                    param.requires_grad = True
-
         return encoder
 
     def forward(self, tokenized, abstract_sent_idx):
-        "Forward pass for the model."
+        """
+        Run the forward pass. Encode the inputs and return softmax values for
+        the labels and the rationale sentences.
+
+        The `abstract_sent_idx` gives the indices of the `</s>` tokens being
+        used to represent each sentence in the abstract.
+        """
+        # Encode.
         encoded = self.encoder(**tokenized)
+
+        # Make label predictions.
         pooled_output = self.dropout(encoded.pooler_output)
+        # [n_documents x n_labels]
         label_logits = self.label_classifier(pooled_output)
+
+        # Predict labels.
+        # [n_documents]
 
         label_probs = F.softmax(label_logits, dim=1).detach()
         if self.label_threshold is None:
+            # If not doing a label threshold, just take the largest.
             predicted_labels = label_logits.argmax(dim=1)
         else:
+            # If we're using a threshold, set the score for the null label to
+            # the threshold and take the largest.
             label_probs_truncated = label_probs.clone()
             label_probs_truncated[:, self.nei_label] = self.label_threshold
             predicted_labels = label_probs_truncated.argmax(dim=1)
 
+        # Make rationale predictions
+        # Need to invoke `continguous` or `batched_index_select` can fail.
         hidden_states = self.dropout(encoded.last_hidden_state).contiguous()
         sentence_states = batched_index_select(hidden_states, abstract_sent_idx)
 
+        # Concatenate the CLS token with the sentence states.
         pooled_rep = pooled_output.unsqueeze(1).expand_as(sentence_states)
+        # [n_documents x max_n_sentences x (2 * encoder_hidden_dim)]
         rationale_input = torch.cat([pooled_rep, sentence_states], dim=2)
+        # Squeeze out dim 2 (the encoder dim).
+        # [n_documents x max_n_sentences]
         rationale_logits = self.rationale_classifier(rationale_input).squeeze(2)
 
+        # Predict rationales.
+        # [n_documents x max_n_sentences]
         rationale_probs = torch.sigmoid(rationale_logits).detach()
         predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64)
 
@@ -236,18 +272,26 @@ class MultiVerSModel(pl.LightningModule):
                 "predicted_labels": predicted_labels,
                 "predicted_rationales": predicted_rationales}
 
+
     def training_step(self, batch, batch_idx):
         "Multi-task loss on a batch of inputs."
         res = self(batch["tokenized"], batch["abstract_sent_idx"])
-        label_loss = F.cross_entropy(res["label_logits"], batch["label"], reduction="none")
+
+        # Loss for label prediction.
+        label_loss = F.cross_entropy(
+            res["label_logits"], batch["label"], reduction="none")
+        # Take weighted average of per-sample losses.
         label_loss = (batch["weight"] * label_loss).sum()
 
+        # Loss for rationale selection.
         rationale_loss = masked_binary_cross_entropy_with_logits(
             res["rationale_logits"], batch["rationale"], batch["weight"],
             batch["rationale_mask"])
 
+        # Loss is a weighted sum of the two components.
         loss = self.label_weight * label_loss + self.rationale_weight * rationale_loss
 
+        # Invoke metrics.
         self.log("label_loss", label_loss)
         self.log("rationale_loss", rationale_loss)
         self.log("loss", loss)
@@ -262,6 +306,8 @@ class MultiVerSModel(pl.LightningModule):
 
     def validation_epoch_end(self, outs):
         "Log metrics at end of validation."
+        # Log the train metrics here so that we keep track of train and valid
+        # metrics at the same time, even if we validate multiple times an epoch.
         self._log_metrics("train")
         self._log_metrics("valid")
 
@@ -271,13 +317,20 @@ class MultiVerSModel(pl.LightningModule):
 
     def test_epoch_end(self, outs):
         "Log metrics at end of test."
+        # As above, log the train metrics together with the test metrics.
         self._log_metrics("train")
         self._log_metrics("test")
 
     def _invoke_metrics(self, pred, batch, fold):
-        "Invoke metrics for a single step of train / validation / test."
+        """
+        Invoke metrics for a single step of train / validation / test.
+        `batch` is gold, `pred` is prediction, `fold` specifies the fold.
+        """
         assert fold in ["train", "valid", "test"]
+
+        # We won't need gradients.
         detached = {k: v.detach() for k, v in pred.items()}
+        # Invoke the metrics appropriate for this fold.
         self.metrics[f"metrics_{fold}"](detached, batch)
 
     def _log_metrics(self, fold):
@@ -288,48 +341,85 @@ class MultiVerSModel(pl.LightningModule):
         for k, v in to_log.items():
             self.log(f"{fold}_{k}", v)
 
+        # Uncomment this if still hanging.
+            # self.log(f"{fold}_{k}", v, sync_dist=True, sync_dist_op="sum")
+
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), lr=self.lr)
+        "Set the same LR for all parameters."
+        hparams = self.hparams.hparams
+        optimizer = transformers.AdamW(self.parameters(), lr=self.lr)
+
+        # If we're debugging, just use the vanilla optimizer.
+        if hparams.fast_dev_run or hparams.debug:
+            return optimizer
+
+        # Calculate total number of training steps, for the optimizer.
+        if isinstance(hparams.gpus, str):
+            # If gpus is a string, count the number by splitting on commas.
+            n_gpus = len([x for x in hparams.gpus.split(",") if x])
+        else:
+            n_gpus = int(hparams.gpus)
 
         steps_per_epoch = math.ceil(
-            self.num_training_instances /
-            (self.hparams.train_batch_size * self.hparams.accumulate_grad_batches))
+            hparams.num_training_instances /
+            (n_gpus * hparams.train_batch_size * hparams.accumulate_grad_batches))
 
-        if self.hparams.scheduler_total_epochs is not None:
-            n_epochs = self.hparams.scheduler_total_epochs
+        if hparams.scheduler_total_epochs is not None:
+            n_epochs = hparams.scheduler_total_epochs
         else:
-            n_epochs = self.hparams.max_epochs
+            n_epochs = hparams.max_epochs
 
         num_steps = n_epochs * steps_per_epoch
-        warmup_steps = int(num_steps * self.frac_warmup)
+        warmup_steps = num_steps * self.frac_warmup
         scheduler = get_linear_schedule_with_warmup(
             optimizer, num_warmup_steps=warmup_steps, num_training_steps=num_steps)
 
-        lr_dict = {"scheduler": scheduler, "interval": "step"}
-        return {"optimizer": optimizer, "lr_scheduler": lr_dict}
+        lr_dict = {"scheduler": scheduler,
+                   "interval": "step"}
+        res = {"optimizer": optimizer,
+               "lr_scheduler": lr_dict}
 
-    @pl.core.decorators.auto_move_data
+        return res
+
+    @auto_move_data
     def predict(self, batch, force_rationale=False):
-        "Make predictions on a batch passed in from the dataloader."
+        """
+        Make predictions on a batch passed in from the dataloader.
+        """
+        # Run forward pass.
         with torch.no_grad():
             output = self(batch["tokenized"], batch["abstract_sent_idx"])
+
         return self.decode(output, batch, force_rationale)
 
     @staticmethod
     def decode(output, batch, force_rationale=False):
-        "Run decoding to get output in human-readable form."
-        label_lookup = {0: "CONTRADICT", 1: "NEI", 2: "SUPPORT"}
+        """
+        Run decoding to get output in human-readable form. The `output` here is
+        the output of the forward pass.
+        """
+        # Mapping from ints to labels.
+        label_lookup = {0: "CONTRADICT",
+                        1: "NEI",
+                        2: "SUPPORT"}
+
+        # Get predicted rationales, only keeping eligible sentences.
         instances = util.unbatch(batch, ignore=["tokenized"])
         output_unbatched = util.unbatch(output)
-        predictions = []
 
+        predictions = []
         for this_instance, this_output in zip(instances, output_unbatched):
             predicted_label = label_lookup[this_output["predicted_labels"]]
+
+            # Due to minibatching, may need to get rid of padding sentences.
             rationale_ix = this_instance["abstract_sent_idx"] > 0
             rationale_indicators = this_output["predicted_rationales"][rationale_ix]
             predicted_rationale = rationale_indicators.nonzero()[0].tolist()
+            # Need to convert from numpy data type to native python.
             predicted_rationale = [int(x) for x in predicted_rationale]
 
+            # If we're forcing a rationale, then if the predicted label is not "NEI"
+            # take the highest-scoring sentence as a rationale.
             if predicted_label != "NEI" and not predicted_rationale and force_rationale:
                 candidates = this_output["rationale_probs"][rationale_ix]
                 predicted_rationale = [candidates.argmax()]
@@ -345,5 +435,3 @@ class MultiVerSModel(pl.LightningModule):
             predictions.append(res)
 
         return predictions
-
-

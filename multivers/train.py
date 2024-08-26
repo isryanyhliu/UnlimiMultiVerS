@@ -2,6 +2,7 @@ import datetime
 import pytz
 import time
 from pathlib import Path
+import sys
 import subprocess
 
 import pytorch_lightning as pl
@@ -73,20 +74,35 @@ def get_num_training_instances(args):
 
 
 def parse_args():
+    import sys
     parser = argparse.ArgumentParser(description="Run SciFact training.")
     parser.add_argument("--datasets", type=str)
     parser.add_argument("--starting_checkpoint", type=str, default=None)
     parser.add_argument("--monitor", type=str, default="valid_sentence_label_f1")
     parser.add_argument("--result_dir", type=str, default="results/lightning_logs")
     parser.add_argument("--experiment_name", type=str, default=None)
+    
+    if '--train_batch_size' not in sys.argv:
+        parser.add_argument("--train_batch_size", type=int, default=8, help="Batch size for training")
+
+    if '--accumulate_grad_batches' not in sys.argv:
+        parser.add_argument("--accumulate_grad_batches", type=int, default=1, help="Number of gradient accumulation steps")
+
+    # 添加模型和数据模块特定的参数
     parser = MultiVerSModel.add_model_specific_args(parser)
     parser = dm.ConcatDataModule.add_model_specific_args(parser)
+    
+    # 添加 PyTorch Lightning Trainer 的参数
     parser = pl.Trainer.add_argparse_args(parser)
 
     args = parser.parse_args()
     args.timestamp = get_timestamp()
     args.git_checksum = get_checksum()
     return args
+
+
+
+
 
 
 def main():
