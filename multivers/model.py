@@ -160,83 +160,141 @@ class MultiVerSModel(pl.LightningModule):
 
         return parser
 
-    # @staticmethod
-    # def _get_encoder(hparams):
-    #     "Start from the Longformer science checkpoint."
-    #     starting_encoder_name = "allenai/longformer-large-4096"
-    #     encoder = LongformerModel.from_pretrained(
-    #         starting_encoder_name,
-    #         gradient_checkpointing=hparams.gradient_checkpointing,
-    #         # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
-    #     )            
-
-    #     orig_state_dict = encoder.state_dict()
-    #     checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
-
-    #     # New checkpoint
-    #     new_state_dict = {}
-    #     # Add items from loaded checkpoint.
-    #     for k, v in checkpoint_prefixed.items():
-    #         # Don't need the language model head.
-    #         if "lm_head." in k:
-    #             continue
-    #         # Get rid of the first 8 characters, which say `roberta.`.
-    #         new_key = k[8:]
-    #         new_state_dict[new_key] = v
-
-    #     # Add items from Huggingface state_dict. These are never used, but
-    #     # they're needed to make things line up
-    #     ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
-    #     for name in ADD_TO_CHECKPOINT:
-    #         if name in orig_state_dict:
-    #             new_state_dict[name] = orig_state_dict[name]
-    #         else:
-    #             print(f"在原始状态字典中找不到键 {name}，跳过。")
-
-    #     # Resize embeddings and load state dict.
-    #     target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
-    #     encoder.resize_token_embeddings(target_embed_size)
-    #     encoder.load_state_dict(new_state_dict, strict=False)
-
-    #     return encoder
-
-    def _get_encoder(self, hparams):
-        "Load the existing Longformer-based checkpoint and convert it to Unlimiformer."
-        # 加载原有的 Longformer 模型权重
+    @staticmethod
+    def _get_encoder(hparams):
+        "Start from the Longformer science checkpoint."
+        starting_encoder_name = "allenai/longformer-large-4096"
         encoder = LongformerModel.from_pretrained(
-            "allenai/longformer-large-4096",
+            starting_encoder_name,
             gradient_checkpointing=hparams.gradient_checkpointing,
-        )
+            # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
+        )            
 
-        # Load the state dict from the Longformer + healthver fine-tuned checkpoint
+        orig_state_dict = encoder.state_dict()
         checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
-        encoder.load_state_dict(checkpoint_prefixed, strict=False)
 
-        # Convert Longformer to Unlimiformer
-        unlimiformer_kwargs = {
-            'layer_begin': 12, 
-            'layer_end': None,
-            'unlimiformer_head_num': None, # 
-            'exclude_attention': False, # 是否排除注意力层, True保留原来的, False使用unlimiformer的
-            'chunk_overlap': 256, # 块之间的重叠, 越大越重视连贯性
-            'model_encoder_max_len': 512, # 每个块的最大长度, 越大越能捕捉上下文
-            'verbose': False, # 是否打印详细信息, 默认为 False
-            'use_datastore': False, 
-            'flat_index': False,
-            'test_datastore': False, 
-            'reconstruct_embeddings': False, 
-            'gpu_datastore': True,
-            'gpu_index': True,
-            'unlimiformer_training': True, # 训练时设置为 True, 推理时设置为 False !!!
-            # 'test_unlimiformer': False, # 训练时设置为 False, 推理时设置为 True !!!
-        }
+        # New checkpoint
+        new_state_dict = {}
+        # Add items from loaded checkpoint.
+        for k, v in checkpoint_prefixed.items():
+            # Don't need the language model head.
+            if "lm_head." in k:
+                continue
+            # Get rid of the first 8 characters, which say `roberta.`.
+            new_key = k[8:]
+            new_state_dict[new_key] = v
 
-        # 将 Longformer 转换为 Unlimiformer
-        encoder = Unlimiformer.convert_model(encoder, **unlimiformer_kwargs)
+        # Add items from Huggingface state_dict. These are never used, but
+        # they're needed to make things line up
+        ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+        for name in ADD_TO_CHECKPOINT:
+            if name in orig_state_dict:
+                new_state_dict[name] = orig_state_dict[name]
+            else:
+                print(f"在原始状态字典中找不到键 {name}，跳过。")
+
+        # Resize embeddings and load state dict.
+        target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
+        encoder.resize_token_embeddings(target_embed_size)
+        encoder.load_state_dict(new_state_dict, strict=False)
 
         return encoder
 
 
+    # def _get_encoder(self, hparams):
+    #     "Load the existing Longformer-based checkpoint and convert it to Unlimiformer."
+    #     # 加载原有的 Longformer 模型权重
+    #     encoder = LongformerModel.from_pretrained(
+    #         "allenai/longformer-large-4096",
+    #         gradient_checkpointing=hparams.gradient_checkpointing,
+    #     )
+
+    #     # Load the state dict from the Longformer + healthver fine-tuned checkpoint
+    #     checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
+    #     encoder.load_state_dict(checkpoint_prefixed, strict=False)
+
+    #     # Convert Longformer to Unlimiformer
+    #     unlimiformer_kwargs = {
+    #         'layer_begin': 12, 
+    #         'layer_end': None,
+    #         'unlimiformer_head_num': None, # 
+    #         'exclude_attention': False, # 是否排除注意力层, True保留原来的, False使用unlimiformer的
+    #         'chunk_overlap': 256, # 块之间的重叠, 越大越重视连贯性
+    #         'model_encoder_max_len': 512, # 每个块的最大长度, 越大越能捕捉上下文
+    #         'verbose': False, # 是否打印详细信息, 默认为 False
+    #         'use_datastore': False, 
+    #         'flat_index': False,
+    #         'test_datastore': False, 
+    #         'reconstruct_embeddings': False, 
+    #         'gpu_datastore': True,
+    #         'gpu_index': True,
+    #         'unlimiformer_training': True, # 训练时设置为 True, 推理时设置为 False !!!
+    #         # 'test_unlimiformer': False, # 训练时设置为 False, 推理时设置为 True !!!
+    #     }
+
+    #     # 将 Longformer 转换为 Unlimiformer
+    #     encoder = Unlimiformer.convert_model(encoder, **unlimiformer_kwargs)
+
+    #     return encoder
+
+
+    # def forward(self, tokenized, abstract_sent_idx):
+    #     """
+    #     Run the forward pass. Encode the inputs and return softmax values for
+    #     the labels and the rationale sentences.
+
+    #     The `abstract_sent_idx` gives the indices of the `</s>` tokens being
+    #     used to represent each sentence in the abstract.
+    #     """
+    #     # Encode.
+    #     encoded = self.encoder(**tokenized)
+
+    #     # Make label predictions.
+    #     pooled_output = self.dropout(encoded.pooler_output)
+    #     # [n_documents x n_labels]
+    #     label_logits = self.label_classifier(pooled_output)
+
+    #     # Predict labels.
+    #     # [n_documents]
+
+    #     label_probs = F.softmax(label_logits, dim=1).detach()
+    #     if self.label_threshold is None:
+    #         # If not doing a label threshold, just take the largest.
+    #         predicted_labels = label_logits.argmax(dim=1)
+    #     else:
+    #         # If we're using a threshold, set the score for the null label to
+    #         # the threshold and take the largest.
+    #         label_probs_truncated = label_probs.clone()
+    #         label_probs_truncated[:, self.nei_label] = self.label_threshold
+    #         predicted_labels = label_probs_truncated.argmax(dim=1)
+
+    #     # Make rationale predictions
+    #     # Need to invoke `continguous` or `batched_index_select` can fail.
+    #     hidden_states = self.dropout(encoded.last_hidden_state).contiguous()
+    #     sentence_states = batched_index_select(hidden_states, abstract_sent_idx)
+
+    #     # Concatenate the CLS token with the sentence states.
+    #     pooled_rep = pooled_output.unsqueeze(1).expand_as(sentence_states)
+    #     # [n_documents x max_n_sentences x (2 * encoder_hidden_dim)]
+    #     rationale_input = torch.cat([pooled_rep, sentence_states], dim=2)
+    #     # Squeeze out dim 2 (the encoder dim).
+    #     # [n_documents x max_n_sentences]
+    #     rationale_logits = self.rationale_classifier(rationale_input).squeeze(2)
+
+    #     # Predict rationales.
+    #     # [n_documents x max_n_sentences]
+    #     rationale_probs = torch.sigmoid(rationale_logits).detach()
+    #     predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64)
+
+    #     return {"label_logits": label_logits,
+    #             "rationale_logits": rationale_logits,
+    #             "label_probs": label_probs,
+    #             "rationale_probs": rationale_probs,
+    #             "predicted_labels": predicted_labels,
+    #             "predicted_rationales": predicted_rationales}
+
+
+  
     def forward(self, tokenized, abstract_sent_idx):
         """
         Run the forward pass. Encode the inputs and return softmax values for
@@ -245,52 +303,66 @@ class MultiVerSModel(pl.LightningModule):
         The `abstract_sent_idx` gives the indices of the `</s>` tokens being
         used to represent each sentence in the abstract.
         """
-        # Encode.
+        max_length = 4096  # Longformer's max sequence length
+
+        # Ensure input_ids, attention_mask, and global_attention_mask are truncated to max_length
+        tokenized['input_ids'] = tokenized['input_ids'][:, :max_length]
+        tokenized['attention_mask'] = tokenized['attention_mask'][:, :max_length]
+
+        # Ensure that global_attention_mask, if present, is also truncated
+        if 'global_attention_mask' in tokenized:
+            tokenized['global_attention_mask'] = tokenized['global_attention_mask'][:, :max_length]
+
+        # Clamp abstract_sent_idx to be within the range of [0, max_length - 1]
+        abstract_sent_idx = torch.clamp(abstract_sent_idx, 0, max_length - 1)
+
+        # Truncate abstract_sent_idx if necessary
+        abstract_sent_idx = abstract_sent_idx[:, :max_length]
+
+        # Ensure all indices in abstract_sent_idx are within valid range
+        valid_mask = abstract_sent_idx < max_length
+        abstract_sent_idx = abstract_sent_idx * valid_mask
+
+        # Encode the inputs
         encoded = self.encoder(**tokenized)
 
-        # Make label predictions.
+        # Make label predictions
         pooled_output = self.dropout(encoded.pooler_output)
-        # [n_documents x n_labels]
         label_logits = self.label_classifier(pooled_output)
 
-        # Predict labels.
-        # [n_documents]
-
+        # Predict labels
         label_probs = F.softmax(label_logits, dim=1).detach()
         if self.label_threshold is None:
-            # If not doing a label threshold, just take the largest.
             predicted_labels = label_logits.argmax(dim=1)
         else:
-            # If we're using a threshold, set the score for the null label to
-            # the threshold and take the largest.
             label_probs_truncated = label_probs.clone()
             label_probs_truncated[:, self.nei_label] = self.label_threshold
             predicted_labels = label_probs_truncated.argmax(dim=1)
 
         # Make rationale predictions
-        # Need to invoke `continguous` or `batched_index_select` can fail.
         hidden_states = self.dropout(encoded.last_hidden_state).contiguous()
         sentence_states = batched_index_select(hidden_states, abstract_sent_idx)
 
-        # Concatenate the CLS token with the sentence states.
+        # Concatenate the CLS token with the sentence states
         pooled_rep = pooled_output.unsqueeze(1).expand_as(sentence_states)
-        # [n_documents x max_n_sentences x (2 * encoder_hidden_dim)]
         rationale_input = torch.cat([pooled_rep, sentence_states], dim=2)
-        # Squeeze out dim 2 (the encoder dim).
-        # [n_documents x max_n_sentences]
         rationale_logits = self.rationale_classifier(rationale_input).squeeze(2)
 
-        # Predict rationales.
-        # [n_documents x max_n_sentences]
+        # Predict rationales
         rationale_probs = torch.sigmoid(rationale_logits).detach()
         predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64)
 
-        return {"label_logits": label_logits,
-                "rationale_logits": rationale_logits,
-                "label_probs": label_probs,
-                "rationale_probs": rationale_probs,
-                "predicted_labels": predicted_labels,
-                "predicted_rationales": predicted_rationales}
+        return {
+            "label_logits": label_logits,
+            "rationale_logits": rationale_logits,
+            "label_probs": label_probs,
+            "rationale_probs": rationale_probs,
+            "predicted_labels": predicted_labels,
+            "predicted_rationales": predicted_rationales
+        }
+
+
+
 
     def training_step(self, batch, batch_idx):
         "Multi-task loss on a batch of inputs."

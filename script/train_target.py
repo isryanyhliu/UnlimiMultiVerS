@@ -80,7 +80,7 @@ def main():
         "--scheduler_total_epochs",
         epochs,
         "--train_batch_size",
-        2,
+        1,
         "--eval_batch_size",
         2,
         "--encoder_name",
