@@ -2,7 +2,7 @@ from tqdm import tqdm
 import argparse
 from pathlib import Path
 
-from multivers.model_old import MultiVerSModel
+from model import MultiVerSModel
 from data import get_dataloader
 import util
 
