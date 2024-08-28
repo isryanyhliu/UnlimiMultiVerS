@@ -154,7 +154,7 @@ class MultiVerSModel(pl.LightningModule):
         gradient_checkpointing = getattr(self.hparams, "gradient_checkpointing", False)
         encoder = LongformerModel.from_pretrained(
             starting_encoder_name,
-            gradient_checkpointing=gradient_checkpointing,
+            gradient_checkpointing=gradient_checkpointing, 
         )
 
         # Load the science checkpoint
