@@ -18,20 +18,6 @@ from metrics import SciFactMetrics
 
 import util
 
-import os
-import sys
-
-# 获取当前文件所在的目录（即 multivers 目录）
-current_dir = os.path.dirname(os.path.abspath(__file__))
-
-# 获取项目根目录的路径
-project_root = os.path.dirname(current_dir)
-
-# 将 libs 目录添加到 sys.path
-libs_path = os.path.join(project_root, 'libs')
-sys.path.append(libs_path)
-
-from unlimiformers.src.unlimiformer import UnlimiformerLongformer
 
 def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mask):
     """
@@ -152,44 +138,83 @@ class MultiVerSModel(pl.LightningModule):
                             help="Threshold for non-NEI label.")
         parser.add_argument("--rationale_threshold", default=0.5, type=float,
                             help="Threshold for rationale.")
-        parser.add_argument("--test_unlimiformer", type=bool, default=True, help="是否使用 Unlimiformer")
-        parser.add_argument("--layer_begin", type=int, default=0, help="Unlimiformer开始应用的层数")
-        parser.add_argument("--layer_end", type=int, default=None, help="Unlimiformer结束应用的层数")
-        parser.add_argument("--unlimiformer_chunk_overlap", type=float, default=0.5, help="Unlimiformer的chunk重叠率")
-        parser.add_argument("--unlimiformer_chunk_size", type=int, default=None, help="Unlimiformer的chunk大小")
+
         return parser
+
+    # @staticmethod
+    # def _get_encoder(hparams):
+    #     "Start from the Longformer science checkpoint."
+    #     starting_encoder_name = "allenai/longformer-large-4096"
+    #     encoder = LongformerModel.from_pretrained(
+    #         starting_encoder_name,
+    #         gradient_checkpointing=hparams.gradient_checkpointing)
+
+    #     orig_state_dict = encoder.state_dict()
+    #     checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
+
+    #     # New checkpoint
+    #     new_state_dict = {}
+    #     # Add items from loaded checkpoint.
+    #     for k, v in checkpoint_prefixed.items():
+    #         # Don't need the language model head.
+    #         if "lm_head." in k:
+    #             continue
+    #         # Get rid of the first 8 characters, which say `roberta.`.
+    #         new_key = k[8:]
+    #         new_state_dict[new_key] = v
+
+    #     # Add items from Huggingface state_dict. These are never used, but
+    #     # they're needed to make things line up
+    #     ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+    #     for name in ADD_TO_CHECKPOINT:
+    #         new_state_dict[name] = orig_state_dict[name]
+
+    #     # Resize embeddings and load state dict.
+    #     target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
+    #     encoder.resize_token_embeddings(target_embed_size)
+    #     encoder.load_state_dict(new_state_dict)
+
+    #     return encoder
+    
 
     @staticmethod
     def _get_encoder(hparams):
+        "Start from the Longformer science checkpoint."
         starting_encoder_name = "allenai/longformer-large-4096"
         encoder = LongformerModel.from_pretrained(
             starting_encoder_name,
             gradient_checkpointing=hparams.gradient_checkpointing,
-        )
-        
+            # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
+        )            
+
         orig_state_dict = encoder.state_dict()
         checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
 
+        # New checkpoint
         new_state_dict = {}
+        # Add items from loaded checkpoint.
         for k, v in checkpoint_prefixed.items():
+            # Don't need the language model head.
             if "lm_head." in k:
                 continue
+            # Get rid of the first 8 characters, which say `roberta.`.
             new_key = k[8:]
             new_state_dict[new_key] = v
 
-        encoder.resize_token_embeddings(new_state_dict['embeddings.word_embeddings.weight'].shape[0])
+        # Add items from Huggingface state_dict. These are never used, but
+        # they're needed to make things line up
+        ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+        for name in ADD_TO_CHECKPOINT:
+            if name in orig_state_dict:
+                new_state_dict[name] = orig_state_dict[name]
+            else:
+                print(f"在原始状态字典中找不到键 {name}，跳过。")
+
+        # Resize embeddings and load state dict.
+        target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
+        encoder.resize_token_embeddings(target_embed_size)
         encoder.load_state_dict(new_state_dict, strict=False)
 
-        if hparams.test_unlimiformer:
-            unlimiformer_kwargs = {
-                'layer_begin': hparams.layer_begin,
-                'layer_end': hparams.layer_end,
-                'chunk_overlap': hparams.unlimiformer_chunk_overlap,
-                'model_encoder_max_len': hparams.unlimiformer_chunk_size,
-            }
-            encoder = UnlimiformerLongformer.convert_model(encoder, **unlimiformer_kwargs)
-            print("----- Unlimiformer applied to encoder.")
-        
         return encoder
 
     def forward(self, tokenized, abstract_sent_idx):

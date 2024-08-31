@@ -90,11 +90,12 @@ class Unlimiformer(Generic[ModelType]):
             LEDForConditionalGeneration: UnlimiformerLED,
             LlamaModel: UnlimiformerLLaMa,
             LlamaForCausalLM: UnlimiformerLLaMa,
-            LongformerModel: UnlimiformerLongformer  # Add Longformer here
+            LongformerModel: UnlimiformerLongformer,  # 添加对 LongformerModel 的支持
         }
         if type(model) not in type_to_class:
             raise ValueError(f"Unsupported model type: {type(model)}")
-        return type_to_class[type(model)](model, *args, **kwargs)
+        type_to_class[type(model)](model, *args, **kwargs)
+        return model
 
     def break_into(self, model):
         self.actual_model_window_size = self.window_size()
@@ -857,7 +858,7 @@ class UnlimiformerBART(Unlimiformer[BartModel]):
     def process_key_value(self, capturers):
         key_capturer, value_capturer = capturers
         key, value = key_capturer.captured, value_capturer.captured
-        # (batch, time, heads, attn_dim)
+        # (batch, time, heads * attn_dim)
         attention = self.model.base_model.decoder.layers[-1].encoder_attn
 
         # query, key, value: (batch, heads, time, attn_dim)
@@ -940,7 +941,7 @@ class UnlimiformerT5(Unlimiformer[T5Model]):
     def process_key_value(self, capturers):
         key_capturer, value_capturer = capturers
         key, value = key_capturer.captured, value_capturer.captured
-        # (batch, time, heads, attn_dim)
+        # (batch, time, heads * attn_dim)
         attention = self.model.base_model.decoder.block[-1].layer[1].EncDecAttention
 
         # query, key, value: (batch, heads, time, attn_dim)
