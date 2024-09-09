@@ -62,6 +62,14 @@ def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mas
 
     return final_loss
 
+def chunk_input(input_ids, chunk_size=4096):
+    """
+    手动切分输入 token 以避免超出 Longformer 的最大长度限制。
+    """
+    input_chunks = [input_ids[i:i + chunk_size] for i in range(0, len(input_ids), chunk_size)]
+    return input_chunks
+
+
 
 class MultiVerSModel(pl.LightningModule):
     """
@@ -159,32 +167,6 @@ class MultiVerSModel(pl.LightningModule):
         parser.add_argument("--unlimiformer_chunk_size", type=int, default=None, help="Unlimiformer的chunk大小")
         return parser
 
-    @staticmethod
-    def expand_positional_embeddings(encoder, new_max_len):
-        """
-        Expand the positional embeddings of the Longformer model to handle longer sequences.
-        """
-        # 获取现有的 positional embeddings
-        current_max_len, embedding_dim = encoder.embeddings.position_embeddings.weight.shape
-        
-        # 如果新长度小于等于当前长度，则不需要扩展
-        if new_max_len <= current_max_len:
-            return encoder
-
-        # 新的 positional embedding
-        new_position_embeddings = nn.Embedding(new_max_len, embedding_dim)
-        
-        # 复制现有的 embeddings
-        new_position_embeddings.weight.data[:current_max_len] = encoder.embeddings.position_embeddings.weight.data
-        
-        # 如果需要，初始化额外的 embeddings
-        new_position_embeddings.weight.data[current_max_len:] = torch.randn(new_max_len - current_max_len, embedding_dim)
-        
-        # 替换原有的 positional embeddings
-        encoder.embeddings.position_embeddings = new_position_embeddings
-        encoder.config.max_position_embeddings = new_max_len
-        
-        return encoder
 
 
     @staticmethod
@@ -194,8 +176,6 @@ class MultiVerSModel(pl.LightningModule):
             starting_encoder_name,
             gradient_checkpointing=hparams.gradient_checkpointing,
         )
-
-        encoder = MultiVerSModel.expand_positional_embeddings(encoder, new_max_len=4 * 4096)  # 扩展到 4 倍长度
         
         orig_state_dict = encoder.state_dict()
         checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
@@ -231,7 +211,18 @@ class MultiVerSModel(pl.LightningModule):
         used to represent each sentence in the abstract.
         """
         # Encode.
-        encoded = self.encoder(**tokenized)
+        # encoded = self.encoder(**tokenized)
+
+        input_chunks = chunk_input(tokenized['input_ids'], chunk_size=4096)
+
+        # 对每个 chunk 进行处理
+        all_encoded_outputs = []
+        for chunk in input_chunks:
+            encoded = self.encoder(input_ids=chunk)
+            all_encoded_outputs.append(encoded)
+
+        # 将所有 chunk 的输出进行合并
+        final_encoded = torch.cat(all_encoded_outputs, dim=1)
 
         # Make label predictions.
         pooled_output = self.dropout(encoded.pooler_output)

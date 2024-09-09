@@ -156,15 +156,19 @@ class MultiVerSModel(pl.LightningModule):
         parser.add_argument("--layer_begin", type=int, default=0, help="Unlimiformer开始应用的层数")
         parser.add_argument("--layer_end", type=int, default=None, help="Unlimiformer结束应用的层数")
         parser.add_argument("--unlimiformer_chunk_overlap", type=float, default=0.5, help="Unlimiformer的chunk重叠率")
-        parser.add_argument("--unlimiformer_chunk_size", type=int, default=None, help="Unlimiformer的chunk大小")
+        parser.add_argument("--unlimiformer_chunk_size", type=int, default=8192, help="Unlimiformer的chunk大小")
         return parser
 
     @staticmethod
     def _get_encoder(hparams):
         starting_encoder_name = "allenai/longformer-large-4096"
-        encoder = LongformerModel.from_pretrained(
+        encoder = UnlimiformerLongformer.from_pretrained(
             starting_encoder_name,
             gradient_checkpointing=hparams.gradient_checkpointing,
+            layer_begin=hparams.layer_begin,
+            layer_end=hparams.layer_end,
+            chunk_overlap=hparams.unlimiformer_chunk_overlap,
+            model_encoder_max_len=hparams.unlimiformer_chunk_size,
         )
         
         orig_state_dict = encoder.state_dict()
@@ -177,19 +181,9 @@ class MultiVerSModel(pl.LightningModule):
             new_key = k[8:]
             new_state_dict[new_key] = v
 
-        encoder.resize_token_embeddings(new_state_dict['embeddings.word_embeddings.weight'].shape[0])
-        encoder.load_state_dict(new_state_dict, strict=False)
+        encoder.model.resize_token_embeddings(new_state_dict['embeddings.word_embeddings.weight'].shape[0])
+        encoder.model.load_state_dict(new_state_dict, strict=False)
 
-        if hparams.test_unlimiformer:
-            unlimiformer_kwargs = {
-                'layer_begin': hparams.layer_begin,
-                'layer_end': hparams.layer_end,
-                'chunk_overlap': hparams.unlimiformer_chunk_overlap,
-                'model_encoder_max_len': hparams.unlimiformer_chunk_size,
-            }
-            encoder = UnlimiformerLongformer.convert_model(encoder, **unlimiformer_kwargs)
-            print("----- Unlimiformer applied to encoder.")
-        
         return encoder
 
     def forward(self, tokenized, abstract_sent_idx):

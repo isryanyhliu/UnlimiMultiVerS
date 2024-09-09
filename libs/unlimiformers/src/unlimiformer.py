@@ -1159,6 +1159,23 @@ class ActivationCapturer(nn.Module):
 from transformers import LongformerModel, LongformerForMaskedLM
 
 class UnlimiformerLongformer(Unlimiformer[LongformerModel]):
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        # Extract Unlimiformer-specific arguments
+        unlimiformer_args = {
+            'layer_begin': kwargs.pop('layer_begin', -1),
+            'layer_end': kwargs.pop('layer_end', None),
+            'chunk_overlap': kwargs.pop('chunk_overlap', 0),
+            'model_encoder_max_len': kwargs.pop('model_encoder_max_len', None),
+            # Add other Unlimiformer-specific arguments here if needed
+        }
+        
+        # Load the Longformer model
+        model = LongformerModel.from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        
+        # Return an instance of UnlimiformerLongformer
+        return cls(model, **unlimiformer_args)
+
     def __init__(self, model: LongformerModel, *args, **kwargs):
         super().__init__(model, *args, **kwargs)
         self.model = model
@@ -1178,7 +1195,8 @@ class UnlimiformerLongformer(Unlimiformer[LongformerModel]):
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
-
+    def state_dict(self, *args, **kwargs):
+        return self.model.state_dict(*args, **kwargs)
 
     def create_key_value(self, encoder_hidden_states, decoder_layer):
         # (batch, time, hidden_dim)

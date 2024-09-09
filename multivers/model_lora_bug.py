@@ -18,20 +18,6 @@ from metrics import SciFactMetrics
 
 import util
 
-import os
-import sys
-
-# 获取当前文件所在的目录（即 multivers 目录）
-current_dir = os.path.dirname(os.path.abspath(__file__))
-
-# 获取项目根目录的路径
-project_root = os.path.dirname(current_dir)
-
-# 将 libs 目录添加到 sys.path
-libs_path = os.path.join(project_root, 'libs')
-sys.path.append(libs_path)
-
-from unlimiformers.src.unlimiformer import UnlimiformerLongformer
 
 def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mask):
     """
@@ -62,6 +48,8 @@ def masked_binary_cross_entropy_with_logits(input, target, weight, rationale_mas
 
     return final_loss
 
+
+from peft import get_peft_model, LoraConfig, TaskType
 
 class MultiVerSModel(pl.LightningModule):
     """
@@ -98,6 +86,70 @@ class MultiVerSModel(pl.LightningModule):
         # Model components.
         self.encoder_name = hparams.encoder_name
         self.encoder = self._get_encoder(hparams)
+        
+        # 打印模型结构
+        # for name, module in self.encoder.named_modules():
+        #     print(name)
+
+        # Apply LoRA to the encoder
+        lora_config = LoraConfig(
+            task_type=TaskType.SEQ_CLS,  # 任务类型
+            r=8,  # LoRA rank
+            lora_alpha=32,  # LoRA alpha
+            lora_dropout=0.1,  # LoRA dropout
+            target_modules=[
+                "encoder.layer.0.attention.self.query",
+                "encoder.layer.0.attention.self.key",
+                "encoder.layer.1.attention.self.query",
+                "encoder.layer.1.attention.self.key",
+                "encoder.layer.2.attention.self.query",
+                "encoder.layer.2.attention.self.key",
+                "encoder.layer.3.attention.self.query",
+                "encoder.layer.3.attention.self.key",
+                "encoder.layer.4.attention.self.query",
+                "encoder.layer.4.attention.self.key",
+                "encoder.layer.5.attention.self.query",
+                "encoder.layer.5.attention.self.key",
+                "encoder.layer.6.attention.self.query",
+                "encoder.layer.6.attention.self.key",
+                "encoder.layer.7.attention.self.query",
+                "encoder.layer.7.attention.self.key",
+                "encoder.layer.8.attention.self.query",
+                "encoder.layer.8.attention.self.key",
+                "encoder.layer.9.attention.self.query",
+                "encoder.layer.9.attention.self.key",
+                "encoder.layer.10.attention.self.query",
+                "encoder.layer.10.attention.self.key",
+                "encoder.layer.11.attention.self.query",
+                "encoder.layer.11.attention.self.key",
+                "encoder.layer.12.attention.self.query",
+                "encoder.layer.12.attention.self.key",
+                "encoder.layer.13.attention.self.query",
+                "encoder.layer.13.attention.self.key",
+                "encoder.layer.14.attention.self.query",
+                "encoder.layer.14.attention.self.key",
+                "encoder.layer.15.attention.self.query",
+                "encoder.layer.15.attention.self.key",
+                "encoder.layer.16.attention.self.query",
+                "encoder.layer.16.attention.self.key",
+                "encoder.layer.17.attention.self.query",
+                "encoder.layer.17.attention.self.key",
+                "encoder.layer.18.attention.self.query",
+                "encoder.layer.18.attention.self.key",
+                "encoder.layer.19.attention.self.query",
+                "encoder.layer.19.attention.self.key",
+                "encoder.layer.20.attention.self.query",
+                "encoder.layer.20.attention.self.key",
+                "encoder.layer.21.attention.self.query",
+                "encoder.layer.21.attention.self.key",
+                "encoder.layer.22.attention.self.query",
+                "encoder.layer.22.attention.self.key",
+                "encoder.layer.23.attention.self.query",
+                "encoder.layer.23.attention.self.key"
+            ]  # 目标模块
+        )
+        self.encoder = get_peft_model(self.encoder, lora_config)
+
         self.dropout = nn.Dropout(self.encoder.config.hidden_dropout_prob)
 
         # Final output layers.
@@ -152,44 +204,47 @@ class MultiVerSModel(pl.LightningModule):
                             help="Threshold for non-NEI label.")
         parser.add_argument("--rationale_threshold", default=0.5, type=float,
                             help="Threshold for rationale.")
-        parser.add_argument("--test_unlimiformer", type=bool, default=True, help="是否使用 Unlimiformer")
-        parser.add_argument("--layer_begin", type=int, default=0, help="Unlimiformer开始应用的层数")
-        parser.add_argument("--layer_end", type=int, default=None, help="Unlimiformer结束应用的层数")
-        parser.add_argument("--unlimiformer_chunk_overlap", type=float, default=0.5, help="Unlimiformer的chunk重叠率")
-        parser.add_argument("--unlimiformer_chunk_size", type=int, default=4096, help="Unlimiformer的chunk大小")
+
         return parser
 
     @staticmethod
     def _get_encoder(hparams):
+        "Start from the Longformer science checkpoint."
         starting_encoder_name = "allenai/longformer-large-4096"
         encoder = LongformerModel.from_pretrained(
             starting_encoder_name,
             gradient_checkpointing=hparams.gradient_checkpointing,
-        )
-        
+            # attention_op=MemoryEfficientAttentionFlashAttentionOp()  # 使用xformers加速注意力机制
+        )            
+
         orig_state_dict = encoder.state_dict()
         checkpoint_prefixed = torch.load(util.get_longformer_science_checkpoint())
 
+        # New checkpoint
         new_state_dict = {}
+        # Add items from loaded checkpoint.
         for k, v in checkpoint_prefixed.items():
+            # Don't need the language model head.
             if "lm_head." in k:
                 continue
+            # Get rid of the first 8 characters, which say `roberta.`.
             new_key = k[8:]
             new_state_dict[new_key] = v
 
-        encoder.resize_token_embeddings(new_state_dict['embeddings.word_embeddings.weight'].shape[0])
+        # Add items from Huggingface state_dict. These are never used, but
+        # they're needed to make things line up
+        ADD_TO_CHECKPOINT = ["embeddings.position_ids"]
+        for name in ADD_TO_CHECKPOINT:
+            if name in orig_state_dict:
+                new_state_dict[name] = orig_state_dict[name]
+            else:
+                print(f"在原始状态字典中找不到键 {name}，跳过。")
+
+        # Resize embeddings and load state dict.
+        target_embed_size = new_state_dict['embeddings.word_embeddings.weight'].shape[0]
+        encoder.resize_token_embeddings(target_embed_size)
         encoder.load_state_dict(new_state_dict, strict=False)
 
-        if hparams.test_unlimiformer:
-            unlimiformer_kwargs = {
-                'layer_begin': hparams.layer_begin,
-                'layer_end': hparams.layer_end,
-                'chunk_overlap': hparams.unlimiformer_chunk_overlap,
-                'model_encoder_max_len': hparams.unlimiformer_chunk_size,
-            }
-            encoder = UnlimiformerLongformer.convert_model(encoder, **unlimiformer_kwargs)
-            print("----- Unlimiformer applied to encoder.")
-        
         return encoder
 
     def forward(self, tokenized, abstract_sent_idx):
@@ -201,7 +256,12 @@ class MultiVerSModel(pl.LightningModule):
         used to represent each sentence in the abstract.
         """
         # Encode.
-        encoded = self.encoder(**tokenized)
+        # print("Forward pass inputs:", tokenized)
+        encoded = self.encoder(
+            input_ids=tokenized['input_ids'],
+            attention_mask=tokenized['attention_mask'],
+            global_attention_mask=tokenized.get('global_attention_mask', None)
+        )
 
         # Make label predictions.
         pooled_output = self.dropout(encoded.pooler_output)
@@ -210,7 +270,6 @@ class MultiVerSModel(pl.LightningModule):
 
         # Predict labels.
         # [n_documents]
-
         label_probs = F.softmax(label_logits, dim=1).detach()
         if self.label_threshold is None:
             # If not doing a label threshold, just take the largest.
@@ -240,12 +299,14 @@ class MultiVerSModel(pl.LightningModule):
         rationale_probs = torch.sigmoid(rationale_logits).detach()
         predicted_rationales = (rationale_probs >= self.rationale_threshold).to(torch.int64)
 
-        return {"label_logits": label_logits,
-                "rationale_logits": rationale_logits,
-                "label_probs": label_probs,
-                "rationale_probs": rationale_probs,
-                "predicted_labels": predicted_labels,
-                "predicted_rationales": predicted_rationales}
+        return {
+            "label_logits": label_logits,
+            "rationale_logits": rationale_logits,
+            "label_probs": label_probs,
+            "rationale_probs": rationale_probs,
+            "predicted_labels": predicted_labels,
+            "predicted_rationales": predicted_rationales
+        }
 
 
     def training_step(self, batch, batch_idx):
